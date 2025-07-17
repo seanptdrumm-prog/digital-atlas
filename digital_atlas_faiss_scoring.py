@@ -4,7 +4,7 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
-from fuzzywuzzy import fuzz
+from rapidfuzz import fuzz
 
 st.set_page_config(layout="centered")
 
