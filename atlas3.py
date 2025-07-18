@@ -157,7 +157,7 @@ def run_batch_match(inputs, threshold=0.4):
 
     return pd.DataFrame(results)
 
-st.markdown("### 📥 Upload Partner Descriptions")
+st.markdown("### For Partners")
 uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
 confidence_cutoff = st.slider("Minimum Confidence Threshold", 0.0, 1.0, 0.4, 0.05)
 
