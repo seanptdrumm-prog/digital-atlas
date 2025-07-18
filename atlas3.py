@@ -6,7 +6,10 @@ from sentence_transformers import SentenceTransformer
 import faiss
 from rapidfuzz.fuzz import token_sort_ratio
 
+st.markdown("<div style='text-align:center;'>", unsafe_allow_html=True)
 st.image("AtlasLogo.jpeg", width=250)
+st.markdown("</div>", unsafe_allow_html=True)
+st.set_page_config(layout="centered")
 
 @st.cache_data
 def load_backbone():
