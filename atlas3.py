@@ -159,7 +159,10 @@ def run_batch_match(inputs, threshold=0.4):
 
 st.markdown("### For Partners")
 uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
-confidence_cutoff = st.slider("Minimum Confidence Threshold", 0.0, 1.0, 0.4, 0.05)
+# Confidence threshold is set internally.
+# Adjust this value if you want to tune what counts as a "high confidence" match.
+confidence_cutoff = 0.4
+
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
