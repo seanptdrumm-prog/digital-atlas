@@ -77,30 +77,39 @@ def compute_score(input_text, match_row, similarity_score):
     naics_clean = normalize(match_row["NAICS_Description"])
     group_clean = normalize(match_row["COB_Group"])
 
-    # Exact match to COB
+    # === Consulting override ===
+    if "consulting" in input_clean:
+        if "consulting" in cob_clean or "consulting" in group_clean:
+            score += 0.4
+            sources.append("Consulting Override Boost")
+        elif match_row["Hiscox_COB"] in ["Packaging Services", "Retail Sales", "Manufacturing", "Logistics"]:
+            score -= 0.3
+            sources.append("Consulting Mismatch Penalty")
+
+    # === Exact match to COB
     if input_clean == cob_clean:
         score += 1.0
         sources.append("Exact COB Match")
 
-    # Fuzzy COB match
+    # === Fuzzy COB match
     fuzzy_score = token_sort_ratio(input_text, match_row["Hiscox_COB"])
     if fuzzy_score > 85:
         score += 0.8
         sources.append(f"Fuzzy COB Match ({fuzzy_score})")
 
-    # Keyword match to NAICS
+    # === Keyword overlap: NAICS
     keyword_overlap = len(set(input_clean.split()) & set(naics_clean.split()))
     if keyword_overlap > 0:
         score += 0.3
         sources.append("Keyword NAICS Match")
 
-    # Keyword match to COB group
+    # === Keyword overlap: COB Group
     group_overlap = len(set(input_clean.split()) & set(group_clean.split()))
     if group_overlap > 0:
         score += 0.2
         sources.append("COB Group Keyword Match")
 
-    # Semantic similarity
+    # === Semantic similarity
     score += similarity_score * 0.6
     sources.append("Semantic Similarity")
 
