@@ -7,6 +7,7 @@ import faiss
 from rapidfuzz.fuzz import token_sort_ratio
 
 st.set_page_config(layout="centered")
+st.markdown("<div style='text-align:center;'><img src='AtlasLogo.jpeg' width='250'></div>", unsafe_allow_html=True)
 
 @st.cache_data
 def load_backbone():
