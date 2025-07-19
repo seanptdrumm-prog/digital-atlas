@@ -77,32 +77,39 @@ def fallback_match(input_text):
             return row
     return None
 
-def assess_appetite_with_confidence(row, score, threshold=0.4):
-    flags = {
+def assess_appetite_with_confidence(row, score):
+    appetite_flags = {
         "PL": str(row.get("PL", "")).strip().upper(),
         "GL": str(row.get("GL", "")).strip().upper(),
         "BOP": str(row.get("BOP", "")).strip().upper(),
         "Cyber": str(row.get("Cyber", "")).strip().upper()
     }
-    count_Y = sum(1 for v in flags.values() if v == "Y")
-    is_ooa_text = str(row.get("Hiscox_COB", "")).strip().lower() in ["ooa", "no appetite"]
 
-    if is_ooa_text or count_Y == 0:
+    yes_flags = [lob for lob, val in appetite_flags.items() if val == "Y"]
+    nnb_flags = [lob for lob, val in appetite_flags.items() if val == "NNB"]
+
+    if len(yes_flags) >= 2:
+        label = "In Appetite"
+        color = "limegreen"
+    elif len(yes_flags) == 1:
+        label = f"{yes_flags[0]} Only"
+        color = "limegreen"
+    elif len(nnb_flags) > 0:
+        label = "Out of Appetite (NNB)"
+        color = "#d7263d"
+    else:
         label = "Out of Appetite"
         color = "#d7263d"
-    elif score > 0.7:
-        if count_Y == 1:
-            only = [k for k, v in flags.items() if v == "Y"][0]
-            label = f"{only} Only"
-        else:
-            label = "In Appetite"
-        color = "limegreen"
-    else:
+
+    if 0.4 <= score < 0.7:
         label = "Needs Review"
         color = "#FFCC00"
 
-    tooltip = "\n".join([f"{k}: {'✅' if v == 'Y' else '❌'}" for k, v in flags.items()])
+    tooltip = "\\n".join([f"{lob}: {'✅' if appetite_flags[lob] == 'Y' else '❌' if appetite_flags[lob] in ['N', 'NNB'] else '—'}"
+                         for lob in ["PL", "GL", "BOP", "Cyber"]])
+
     return label, color, tooltip
+
 
 
 
