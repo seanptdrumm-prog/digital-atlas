@@ -8,20 +8,6 @@ from sentence_transformers import SentenceTransformer
 
 st.set_page_config(layout="centered")
 
-# === SIMS LOADING ANIMATION ===
-sims_messages = [
-    "Reticulating splines...",
-    "Calculating confidence coefficient...",
-    "Greasing the underwriting gears...",
-    "Matching vibes with business types...",
-    "Aligning chakras and coverage terms...",
-    "Fuzzifying reality...",
-    "Summoning digital underwriter spirit...",
-    "Tuning semantic antenna...",
-    "Consulting the NAICS oracle...",
-    "Tetris-ing your input descriptions..."
-]
-
 def loading_animation(stop_signal, placeholder):
     i = 0
     while not stop_signal["stop"]:
@@ -97,25 +83,28 @@ def check_tier1_rules(input_clean, engine_df):
 
 # === SEARCH INTERFACE ===
 def search_top_matches(input_text):
-# === NAICS SEARCH HANDLING ===
-if input_clean.isdigit() and len(input_clean) == 6:
-    naics_matches = engine_df[engine_df["NAICS_Code"].astype(str).str.startswith(input_clean)]
-    results = []
-    for _, row in naics_matches.iterrows():
-        results.append({
-            "Input_Description": input_text,
-            "Hiscox_COB": row["Hiscox_COB"],
-            "full_industry_code": row.get("full_industry_code", ""),
-            "Confidence (%)": "N/A (NAICS Search)",
-            "Match_Status": "Confirmed via NAICS",
-            "Appetite": summarize_appetite_logic(row),
-            "PL": row["PL"],
-            "GL": row["GL"],
-            "BOP": row["BOP"],
-            "Cyber": row["Cyber"]
-        })
-    return results[:3]
+    input_clean = str(input_text).strip().lower()
 
+    # === NAICS SEARCH HANDLING ===
+    if input_clean.isdigit() and len(input_clean) == 6:
+        naics_matches = engine_df[engine_df["NAICS_Code"].astype(str).str.startswith(input_clean)]
+        results = []
+        for _, row in naics_matches.iterrows():
+            results.append({
+                "Input_Description": input_text,
+                "Hiscox_COB": row["Hiscox_COB"],
+                "full_industry_code": row.get("full_industry_code", ""),
+                "Confidence (%)": "N/A (NAICS Search)",
+                "Match_Status": "Confirmed via NAICS",
+                "Appetite": summarize_appetite_logic(row),
+                "PL": row["PL"],
+                "GL": row["GL"],
+                "BOP": row["BOP"],
+                "Cyber": row["Cyber"]
+            })
+        return results[:3]
+
+    # === TIER 1 RULES ===
     tier1_row, _ = check_tier1_rules(input_clean, engine_df)
     if tier1_row is not None:
         return [{
@@ -131,6 +120,7 @@ if input_clean.isdigit() and len(input_clean) == 6:
             "Cyber": tier1_row["Cyber"]
         }]
 
+    # === SEMANTIC SEARCH ===
     embedding = model.encode([input_text], convert_to_numpy=True)
     D, I = index.search(embedding, 3)
     results = []
