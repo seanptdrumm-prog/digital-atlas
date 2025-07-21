@@ -181,7 +181,7 @@ def run_batch_match(inputs):
     return pd.DataFrame(results)
 
 # === UI ===
-st.title("📊 Hiscox Digital Atlas")
+st.title(" Hiscox Digital Atlas")
 
 # Top 3 Search
 search_input = st.text_input("🔍 Search for a business description or 6-digit NAICS code")
@@ -191,7 +191,7 @@ if search_input:
         st.markdown(f"- **{res['Hiscox_COB']}** — {res['Confidence (%)']} — *{res['Match_Status']}*")
 
 st.markdown("---")
-st.markdown("### 📥 Upload Partner Descriptions")
+st.markdown("###  Batch Class of Business Mapping")
 uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 
 if uploaded_file:
