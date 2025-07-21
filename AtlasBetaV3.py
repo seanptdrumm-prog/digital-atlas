@@ -9,15 +9,12 @@ from sentence_transformers import SentenceTransformer
 st.set_page_config(layout="centered")
 
 # === Custom CSS for true black background and red/white accents ===
-# === Custom CSS for theme and drag-over feedback ===
+# === Custom CSS + JS for Black Theme and Drag-Over Highlight ===
 st.markdown("""
     <style>
         body, .stApp {
             background-color: #000000;
             color: #FFFFFF;
-        }
-        .css-1d391kg, .css-1v0mbdj {
-            background-color: #000000;
         }
         .stTextInput > div > div > input {
             background-color: #222222;
@@ -26,25 +23,33 @@ st.markdown("""
         .stFileUploader, .stButton {
             background-color: #111111;
         }
-
-        /* 🔴 DRAG-OVER FEEDBACK FOR FILE UPLOAD */
-        .element-container:has(.stFileUploader):hover {
-            border: 2px dashed #ff0000;
-            padding: 1rem;
-            border-radius: 8px;
-            background-color: #111111;
-            transition: all 0.2s ease-in-out;
+        .drop-target-active {
+            border: 2px dashed #ff4b4b !important;
+            background-color: #1a1a1a !important;
+            border-radius: 8px !important;
         }
     </style>
-""", unsafe_allow_html=True)
+    <script>
+        const observer = new MutationObserver(() => {
+            const dropzone = document.querySelector('section[data-testid="stFileUploader"]');
+            if (dropzone && !dropzone.classList.contains("watched")) {
+                dropzone.classList.add("watched");
 
-def loading_animation(stop_signal, placeholder):
-    i = 0
-    while not stop_signal["stop"]:
-        msg = sims_messages[i % len(sims_messages)]
-        placeholder.markdown(f"### ⏳ {msg}")
-        time.sleep(2.5)
-        i += 1
+                // Add drag events
+                dropzone.addEventListener("dragenter", function () {
+                    dropzone.classList.add("drop-target-active");
+                });
+                dropzone.addEventListener("dragleave", function () {
+                    dropzone.classList.remove("drop-target-active");
+                });
+                dropzone.addEventListener("drop", function () {
+                    dropzone.classList.remove("drop-target-active");
+                });
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    </script>
+""", unsafe_allow_html=True)
 
 # === LOAD DATA ===
 @st.cache_data
