@@ -113,7 +113,40 @@ def match_status(score_pct):
         return "Needs Review"
     else:
         return "No Match Found"
+# === OVERRIDE RULES BLOCK FOR STRONG KEYWORDS ===
+def check_override_rules(input_text, engine_df):
+    text = input_text.lower().strip()
 
+    # === Rule 1: Distributors / Dealers → Distribution COB ===
+    if any(term in text for term in ["distributor", "distributors", "dealer"]):
+        dist_row = engine_df[engine_df["Hiscox_COB"].str.contains("Distribution, Wholesalers, Dealers and Other Sales", case=False)]
+        if not dist_row.empty:
+            return dist_row.iloc[0], "Override: Distributor/Dealer keyword"
+
+    # === Rule 2: Auto + Repair → Auto COB ===
+    if "auto" in text and "repair" in text:
+        auto_row = engine_df[engine_df["Hiscox_COB"].str.contains("Auto, Car, Truck, Boat", case=False)]
+        if not auto_row.empty:
+            return auto_row.iloc[0], "Override: Auto Repair keyword"
+
+    # === Rule 3: Doctor(s) → Physicians Office ===
+    if "doctor" in text or "doctors" in text:
+        if not any(term in text for term in ["psych", "veterin", "dental", "therapy", "clinic"]):
+            doc_row = engine_df[engine_df["Hiscox_COB"].str.lower() == "physicians office"]
+            if not doc_row.empty:
+                return doc_row.iloc[0], "Override: General Doctor(s)"
+
+    # === Rule 4: Book alone ≠ Publishing unless NAICS confirms ===
+    if "book" in text:
+        if not any(term in text for term in ["publish", "print", "author", "editor", "ebook", "magazine", "journal", "media"]):
+            blocklist = ["publishing", "printing"]
+            match_candidates = engine_df[engine_df["Hiscox_COB"].str.lower().str.contains("|".join(blocklist))]
+            if not match_candidates.empty:
+                return None, "Override: Book keyword excluded from publishing/printing"
+
+    return None, None
+
+# === ORIGINAL FUNCTION CONTINUES ===
 def check_tier1_rules(input_clean, engine_df):
     cob_match = engine_df[engine_df["Hiscox_COB"].str.lower() == input_clean]
     if not cob_match.empty:
