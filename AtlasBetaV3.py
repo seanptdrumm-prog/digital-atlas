@@ -97,10 +97,24 @@ def check_tier1_rules(input_clean, engine_df):
 
 # === SEARCH INTERFACE ===
 def search_top_matches(input_text):
-    input_clean = str(input_text).strip().lower()
-    if input_clean.isdigit() and len(input_clean) == 6:
-        naics_matches = engine_df[engine_df["NAICS_Code"].astype(str).str.startswith(input_clean)]
-        return naics_matches.to_dict(orient="records")[:3]
+# === NAICS SEARCH HANDLING ===
+if input_clean.isdigit() and len(input_clean) == 6:
+    naics_matches = engine_df[engine_df["NAICS_Code"].astype(str).str.startswith(input_clean)]
+    results = []
+    for _, row in naics_matches.iterrows():
+        results.append({
+            "Input_Description": input_text,
+            "Hiscox_COB": row["Hiscox_COB"],
+            "full_industry_code": row.get("full_industry_code", ""),
+            "Confidence (%)": "N/A (NAICS Search)",
+            "Match_Status": "Confirmed via NAICS",
+            "Appetite": summarize_appetite_logic(row),
+            "PL": row["PL"],
+            "GL": row["GL"],
+            "BOP": row["BOP"],
+            "Cyber": row["Cyber"]
+        })
+    return results[:3]
 
     tier1_row, _ = check_tier1_rules(input_clean, engine_df)
     if tier1_row is not None:
