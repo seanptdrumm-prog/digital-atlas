@@ -243,16 +243,16 @@ if uploaded_file:
             break
     if text_column:
         inputs = df[text_column].fillna("").tolist()
-results = []
-progress_bar = st.progress(0)
-for i, desc in enumerate(inputs):
-    top_result = search_top_matches(desc[:60])[:1]
-    results.extend(top_result)
-    progress_bar.progress((i + 1) / len(inputs))
-progress_bar.empty()
-result_df = pd.DataFrame(results)
+        results = []
+        progress_bar = st.progress(0)
+        for i, desc in enumerate(inputs):
+            top_result = search_top_matches(desc[:60])[:1]
+            results.extend(top_result)
+            progress_bar.progress((i + 1) / len(inputs))
+        progress_bar.empty()
+        result_df = pd.DataFrame(results)
 
-st.download_button(
+        st.download_button(
             "⬇️ Download Match Results",
             result_df.to_csv(index=False).encode("utf-8"),
             file_name="Atlas_Match_Results.csv",
@@ -260,3 +260,5 @@ st.download_button(
         )
     else:
         st.error("No suitable text column found.")
+
+
