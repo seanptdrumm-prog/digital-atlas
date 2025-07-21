@@ -182,11 +182,16 @@ def search_top_matches(input_text):
 # === Batch Matching ===
 def run_batch_match(inputs):
     results = []
+    progress_bar = st.progress(0)  # Initialize the progress bar
+    total = len(inputs)
+
     embeddings = model.encode(inputs, convert_to_numpy=True)
     D, I = index.search(embeddings, 1)
+
     for i, entry in enumerate(inputs):
         input_clean = str(entry).strip().lower()
         tier1_row, _ = check_tier1_rules(input_clean, engine_df)
+
         if tier1_row is not None:
             appetite_text, _ = summarize_appetite_logic(tier1_row)
             results.append({
@@ -200,25 +205,30 @@ def run_batch_match(inputs):
                 "BOP": tier1_row["BOP"],
                 "Cyber": tier1_row["Cyber"]
             })
-            continue
+        else:
+            idx = I[i][0]
+            row = engine_df.iloc[idx]
+            sim_score = 1 / (1 + D[i][0])
+            sim_pct = round(sim_score * 100, 1)
+            appetite_text, _ = summarize_appetite_logic(row)
+            results.append({
+                "Input_Description": entry,
+                "Hiscox_COB": row["Hiscox_COB"],
+                "Confidence (%)": confidence_label(sim_pct),
+                "Match_Status": match_status(sim_pct),
+                "Appetite": appetite_text,
+                "PL": row["PL"],
+                "GL": row["GL"],
+                "BOP": row["BOP"],
+                "Cyber": row["Cyber"]
+            })
 
-        idx = I[i][0]
-        row = engine_df.iloc[idx]
-        sim_score = 1 / (1 + D[i][0])
-        sim_pct = round(sim_score * 100, 1)
-        appetite_text, _ = summarize_appetite_logic(row)
-        results.append({
-            "Input_Description": entry,
-            "Hiscox_COB": row["Hiscox_COB"],
-            "Confidence (%)": confidence_label(sim_pct),
-            "Match_Status": match_status(sim_pct),
-            "Appetite": appetite_text,
-            "PL": row["PL"],
-            "GL": row["GL"],
-            "BOP": row["BOP"],
-            "Cyber": row["Cyber"]
-        })
+        # Update progress bar
+        progress_bar.progress((i + 1) / total)
+
+    progress_bar.empty()  # Clear the bar when done
     return pd.DataFrame(results)
+
 
 # === UI ===
 st.text_input("🔍 Search for a business description", key="search_input")
