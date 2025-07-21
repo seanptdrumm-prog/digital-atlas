@@ -244,18 +244,14 @@ if uploaded_file:
         if df[col].dtype == object and df[col].str.len().mean() > 5:
             text_column = col
             break
+
     if text_column:
         st.success(f"Using column: '{text_column}'")
         status_placeholder = st.empty()
-        stop_signal = {"stop": False}
-        t = threading.Thread(target=loading_animation, args=(stop_signal, status_placeholder))
-        t.start()
-        try:
-            result_df = run_batch_match(df[text_column].fillna(""))
-        finally:
-            stop_signal["stop"] = True
-            t.join()
+               status_placeholder.markdown("### ⏳ Matching in progress...")
+        result_df = run_batch_match(df[text_column].fillna(""))
         status_placeholder.success("✅ Matching complete.")
+
         st.dataframe(result_df.head(25), use_container_width=True)
         st.download_button(
             "⬇️ Download Match Results",
