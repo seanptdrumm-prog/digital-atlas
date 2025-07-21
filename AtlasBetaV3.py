@@ -212,7 +212,7 @@ logo = Image.open("AtlasLogo.jpeg")
 st.image(logo, use_container_width=False, width=300)
 
 # Top 3 Search
-search_input = st.text_input("🔍 Search for a business description or 6-digit NAICS code")
+search_input = st.text_input("🔍 Search for a business description")
 if search_input:
     st.markdown("#### Top 3 Matches:")
     for res in search_top_matches(search_input):
