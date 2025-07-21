@@ -185,7 +185,12 @@ def run_batch_match(inputs):
     return pd.DataFrame(results)
 
 # === UI ===
-st.title(" Hiscox Digital Atlas")
+from PIL import Image
+
+# === Display Logo at Top Center ===
+logo = Image.open("AtlasLogo.jpeg")
+st.image(logo, use_column_width=False, width=300)
+
 
 # Top 3 Search
 search_input = st.text_input("🔍 Search for a business description or 6-digit NAICS code")
