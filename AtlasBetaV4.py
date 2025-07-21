@@ -285,7 +285,7 @@ if search_input:
     st.markdown("#### Top 3 Matches:")
     results = search_top_matches(search_input)
     for res in results:
-        st.markdown(f"**{res['Hiscox_COB']}** — {res['Confidence']} — *{res['Match_Status']}*")
+        st.markdown(f"**{res['Hiscox_COB']}** — {res[''Confidence (%)']} — *{res['Match_Status']}*")
         st.markdown(f"""
             <div class="appetite-button {res['AppetiteClass']}" title="
                 PL: {'✅' if res['LOB_Details']['PL'] == 'Y' else '❌'} |
