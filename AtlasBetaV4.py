@@ -283,9 +283,9 @@ st.text_input("🔍 Search for a business description", key="search_input")
 search_input = st.session_state.get("search_input", "")
 if search_input:
     st.markdown("#### Top 3 Matches:")
-    results = search_top_matches(search_input)
-    for res in results:
-st.markdown(f"**{res['Hiscox_COB']}** — {res['Confidence (%)']} — *{res['Match_Status']}*")
+    for res in search_top_matches(search_input):
+        st.markdown(f"**{res['Hiscox_COB']}** — {res['Confidence (%)']} — *{res['Match_Status']}*")
+
         st.markdown(f"""
             <div class="appetite-button {res['AppetiteClass']}" title="
                 PL: {'✅' if res['LOB_Details']['PL'] == 'Y' else '❌'} |
