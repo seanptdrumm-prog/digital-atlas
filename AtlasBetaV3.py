@@ -8,6 +8,26 @@ from sentence_transformers import SentenceTransformer
 
 st.set_page_config(layout="centered")
 
+# === Custom CSS for true black background and red/white accents ===
+st.markdown("""
+    <style>
+        body, .stApp {
+            background-color: #000000;
+            color: #FFFFFF;
+        }
+        .css-1d391kg, .css-1v0mbdj {
+            background-color: #000000;
+        }
+        .stTextInput>div>div>input {
+            background-color: #222222;
+            color: #ffffff;
+        }
+        .stFileUploader, .stButton {
+            background-color: #111111;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 def loading_animation(stop_signal, placeholder):
     i = 0
     while not stop_signal["stop"]:
