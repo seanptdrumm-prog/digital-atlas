@@ -248,7 +248,7 @@ if uploaded_file:
     if text_column:
         st.success(f"Using column: '{text_column}'")
         status_placeholder = st.empty()
-               status_placeholder.markdown("### ⏳ Matching in progress...")
+        status_placeholder.markdown("### ⏳ Matching in progress...")
         result_df = run_batch_match(df[text_column].fillna(""))
         status_placeholder.success("✅ Matching complete.")
 
