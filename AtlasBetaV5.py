@@ -252,7 +252,7 @@ for i, desc in enumerate(inputs):
 progress_bar.empty()
 result_df = pd.DataFrame(results)
 
-        st.download_button(
+st.download_button(
             "⬇️ Download Match Results",
             result_df.to_csv(index=False).encode("utf-8"),
             file_name="Atlas_Match_Results.csv",
