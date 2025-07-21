@@ -159,6 +159,21 @@ def check_tier1_rules(input_clean, engine_df):
 # === Top 3 Search Logic ===
 def search_top_matches(input_text):
     input_clean = str(input_text).strip().lower()
+    # === Apply strong override rules ===
+    override_row, override_reason = check_override_rules(input_text, engine_df)
+    if override_row is not None:
+        return [{
+            "Input_Description": input_text,
+            "Hiscox_COB": override_row["Hiscox_COB"],
+            "full_industry_code": override_row.get("full_industry_code", ""),
+            "Confidence (%)": "100.0% (Override Rule)",
+            "Match_Status": "Confirmed via Override",
+            "Appetite": summarize_appetite_logic(override_row),
+            "PL": override_row["PL"],
+            "GL": override_row["GL"],
+            "BOP": override_row["BOP"],
+            "Cyber": override_row["Cyber"]
+        }]
 
     # NAICS Direct Search
     if input_clean.isdigit() and len(input_clean) == 6:
