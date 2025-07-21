@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer
 st.set_page_config(layout="centered")
 
 # === Custom CSS for true black background and red/white accents ===
+# === Custom CSS for theme and drag-over feedback ===
 st.markdown("""
     <style>
         body, .stApp {
@@ -18,12 +19,21 @@ st.markdown("""
         .css-1d391kg, .css-1v0mbdj {
             background-color: #000000;
         }
-        .stTextInput>div>div>input {
+        .stTextInput > div > div > input {
             background-color: #222222;
             color: #ffffff;
         }
         .stFileUploader, .stButton {
             background-color: #111111;
+        }
+
+        /* 🔴 DRAG-OVER FEEDBACK FOR FILE UPLOAD */
+        .element-container:has(.stFileUploader):hover {
+            border: 2px dashed #ff0000;
+            padding: 1rem;
+            border-radius: 8px;
+            background-color: #111111;
+            transition: all 0.2s ease-in-out;
         }
     </style>
 """, unsafe_allow_html=True)
