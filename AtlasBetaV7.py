@@ -76,7 +76,7 @@ model, index = build_model_index(engine_df["match_corpus"])
 def summarize_appetite_logic(row):
     flags = [row["PL"], row["GL"], row["BOP"], row["Cyber"]]
     labels = ["PL", "GL", "BOP", "Cyber"]
-    yes_flags = [label for flag, label in zip(flags, labels) if flag == "Y"]
+    yes_flags = [label for flag, label in zip(flags, labels) if str(flag).strip().lower().startswith("y")]
     if len(yes_flags) >= 2:
         return "In Appetite", "green-btn"
     elif len(yes_flags) == 1:
