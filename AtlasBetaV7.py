@@ -219,13 +219,13 @@ def search_top_matches(input_text):
 search_input = st.text_input("🔍 Search for a business description")
 
 if search_input:
-    st.markdown("### 🧠 Best Match")
+    st.markdown("###  Best Match")
     result = search_top_matches(search_input)[0]  # Only top result
 
     matched_row = engine_df[engine_df["Hiscox_COB"] == result["Hiscox_COB"]].iloc[0]
 
     st.markdown("----")
-    st.markdown(f"### 🧭 **{result['Hiscox_COB']}**")
+    st.markdown(f"###  **{result['Hiscox_COB']}**")
     st.markdown(f"**COB Group:** {matched_row['COB_Group']}")
     st.markdown(f"**NAICS Code:** {matched_row['NAICS_Code']}")
     st.markdown(f"**NAICS Title:** {matched_row['NAICS_Title']}")
@@ -241,9 +241,6 @@ if search_input:
 
     appetite_summary, _ = summarize_appetite_logic(matched_row)
     st.markdown(f"**Appetite Summary:** {appetite_summary}")
-
-    if "Confidence" in result:
-        st.markdown(f"**Confidence Level:** {result['Confidence']}")
 
     st.markdown("----")
 
