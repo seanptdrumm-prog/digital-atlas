@@ -216,19 +216,37 @@ def search_top_matches(input_text):
     return results
 
 # === UI ===
-search_input = st.text_input("🔍 Search for a business description or 6-digit NAICS code")
+search_input = st.text_input("🔍 Search for a business description")
+
 if search_input:
-    st.markdown("#### Top 3 Matches:")
-    for res in search_top_matches(search_input):
-        st.markdown(f"**{res['Hiscox_COB']}** — {res['Confidence']} — *{res['Match_Status']}*")
-        st.markdown(f"""
-            <div class="appetite-button {res['AppetiteClass']}" title="
-                PL: {'✅' if res['LOB_Details']['PL'] == 'Y' else '❌'} |
-                GL: {'✅' if res['LOB_Details']['GL'] == 'Y' else '❌'} |
-                BOP: {'✅' if res['LOB_Details']['BOP'] == 'Y' else '❌'} |
-                Cyber: {'✅' if res['LOB_Details']['Cyber'] == 'Y' else '❌'}
-            ">{res['Appetite']}</div>
-        """, unsafe_allow_html=True)
+    st.markdown("### 🧠 Best Match")
+    result = search_top_matches(search_input)[0]  # Only top result
+
+    matched_row = engine_df[engine_df["Hiscox_COB"] == result["Hiscox_COB"]].iloc[0]
+
+    st.markdown("----")
+    st.markdown(f"### 🧭 **{result['Hiscox_COB']}**")
+    st.markdown(f"**COB Group:** {matched_row['COB_Group']}")
+    st.markdown(f"**NAICS Code:** {matched_row['NAICS_Code']}")
+    st.markdown(f"**NAICS Title:** {matched_row['NAICS_Title']}")
+    st.markdown(f"**Industry Code:** `{matched_row['full_industry_code']}`")
+
+    st.markdown("**Appetite Flags:**")
+    st.markdown(f"""
+- PL: {'✅' if matched_row['PL'].strip().lower().startswith('y') else '❌'}
+- GL: {'✅' if matched_row['GL'].strip().lower().startswith('y') else '❌'}
+- BOP: {'✅' if matched_row['BOP'].strip().lower().startswith('y') else '❌'}
+- Cyber: {'✅' if matched_row['Cyber'].strip().lower().startswith('y') else '❌'}
+""")
+
+    appetite_summary, _ = summarize_appetite_logic(matched_row)
+    st.markdown(f"**Appetite Summary:** {appetite_summary}")
+
+    if "Confidence" in result:
+        st.markdown(f"**Confidence Level:** {result['Confidence']}")
+
+    st.markdown("----")
+
 
 # === Batch Section ===
 st.markdown("---")
