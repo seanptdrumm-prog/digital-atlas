@@ -1,0 +1,135 @@
+import pandas as pd
+import streamlit as st
+import numpy as np
+import faiss
+orpus"])
+
+# === Helpers ===
+def summarize_appetite_logic(row):
+    flags = [row["PL"], row["GL"], row["BOP"], row["Cyber"]]
+    labels = ["PL", "GL", "BOP", "Cyber"]
+    yes_flags = [label for flag, label in zip(flags, labels) if str(flag).strip().lower().startswith("y")]
+    if len(yes_flags) >= 2:
+        return "In Appetite"
+    elif len(yes_flags) == 1:
+        return f"{yes_flags[0]} Only"
+    else:
+        return "Out of Appetite"
+
+def compute_weighted_score(kw_score, naics_score, sim_score):
+    return round((0.40 * kw_score + 0.35 * naics_score + 0.25 * sim_score), 1)
+
+# === Smart Matching Engine (Search Input) ===
+def search_top_match(input_text):
+    input_clean = str(input_text).strip().lower()
+    embedding = model.encode([input_text], convert_to_numpy=True)
+    D, I = index.search(embedding, 1)
+    idx = I[0][0]
+    row = engine_df.iloc[idx]
+
+    sim_score = 1 / (1 + D[0][0])
+    sim_pct = round(sim_score * 100, 1)
+    keyword_score = 100.0 if row["Hiscox_COB"].lower() in input_clean else 70.0
+    naics_score = 100.0 if input_clean in row["NAICS_Description"].lower() else 60.0
+    combined_score = compute_weighted_score(keyword_score, naics_score, sim_pct)
+
+    appetite = summarize_appetite_logic(row)
+
+    return {
+        "Input_Description": input_text,
+        "Hiscox_COB": row["Hiscox_COB"],
+        "PL": row["PL"] if row["Hiscox_COB"] != "OOA" else "",
+        "GL": row["GL"] if row["Hiscox_COB"] != "OOA" else "",
+        "BOP": row["BOP"] if row["Hiscox_COB"] != "OOA" else "",
+        "Cyber": row["Cyber"] if row["Hiscox_COB"] != "OOA" else "",
+        "full_industry_code": row["full_industry_code"] if row["Hiscox_COB"] != "OOA" else "",
+        "COB_Group": row["COB_Group"],
+        "NAICS_Code": row["NAICS_Code"],
+        "NAICS_Title": row["NAICS_Title"],
+        "Appetite_Summary": appetite
+    }
+
+# === UI ===
+st.title("Atlas V8 Business Classifier")
+
+search_input = st.text_input("🔍 Search for a business description")
+
+if search_input:
+    result = search_top_match(search_input)
+
+    with st.expander(f"**{result['Hiscox_COB']}** — {result['Appetite_Summary']}", expanded=False):
+        st.markdown(f"**COB Group:** {result['COB_Group']}")
+        st.markdown(f"**NAICS Code:** {result['NAICS_Code']}")
+        st.markdown(f"**NAICS Title:** {result['NAICS_Title']}")
+        st.markdown(f"**Industry Code:** `{result['full_industry_code']}`")
+        st.markdown("**Appetite Flags:**")
+        st.markdown(f"""
+- PL: {'✅' if str(result['PL']).strip().lower().startswith('y') else '❌'}
+- GL: {'✅' if str(result['GL']).strip().lower().startswith('y') else '❌'}
+- BOP: {'✅' if str(result['BOP']).strip().lower().startswith('y') else '❌'}
+- Cyber: {'✅' if str(result['Cyber']).strip().lower().startswith('y') else '❌'}
+""")
+
+# === Batch Section ===
+st.markdown("---")
+st.markdown("### 📥 Batch Class of Business Mapping")
+uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls", "xlsm", "xlsb"])
+
+if uploaded_file:
+    df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+    text_column = None
+    for col in df.columns:
+        if df[col].dtype == object and df[col].str.len().mean() > 5:
+            text_column = col
+            break
+    if text_column:
+        result_rows = []
+        for desc in df[text_column].fillna(""):
+            match = search_top_match(desc[:60])
+            result_rows.append({
+                "Input_Description": match["Input_Description"],
+                "Hiscox_COB": match["Hiscox_COB"],
+                "PL": match["PL"],
+                "GL": match["GL"],
+                "BOP": match["BOP"],
+                "Cyber": match["Cyber"],
+                "full_industry_code": match["full_industry_code"]
+            })
+        result_df = pd.DataFrame(result_rows)
+        st.download_button(
+            "⬇️ Download Match Results",
+            result_df.to_csv(index=False).encode("utf-8"),
+            file_name="Atlas_Match_Results.csv",
+            mime="text/csv"
+        )
+    else:
+        st.error("No suitable text column found.")
+from sentence_transformers import SentenceTransformer
+
+# === Load Data ===
+@st.cache_data
+def load_data():
+    df = pd.read_excel("AtlasEngine.xlsx", engine="openpyxl")
+    for col in ["Hiscox_COB", "NAICS_Description", "NAICS_Title", "COB_Group"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+    df["match_corpus"] = (
+        df["NAICS_Description"] + " | " +
+        df["NAICS_Title"] + " | " +
+        df["COB_Group"] + " | " +
+        df["Hiscox_COB"]
+    )
+    return df
+
+engine_df = load_data()
+
+@st.cache_resource
+def build_model_index(corpus):
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    embeddings = model.encode(corpus.tolist(), convert_to_numpy=True)
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dim)
+    index.add(embeddings)
+    return model, index
+
+model, index = build_model_index(engine_df["match_c
