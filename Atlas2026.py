@@ -1,71 +1,76 @@
 import streamlit as st
 import pandas as pd
-import re
 from sentence_transformers import SentenceTransformer
 import faiss
 
-st.set_page_config(page_title="Atlas 8.0 (Flexible)", layout="wide")
+st.set_page_config(page_title="Hiscox Atlas 8.0", layout="wide")
 
-# 1. SMART DATA LOADING (Finds columns regardless of names)
+# 1. DATA LOADING
 @st.cache_data(ttl=600)
-def load_live_data():
+def load_data():
     sheet_id = "1XiT2GVCwdM2_F2-MHQOVVy-ZMAAL5_Tz0AaIkdPs-U0"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
-    
-    def fetch_and_clean(name):
-        df = pd.read_csv(base_url + name)
-        # Standardize: lowercase everything and remove spaces for the engine's internal use
-        df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
-        return df
+    master = pd.read_csv(base_url + "Hiscox543")
+    # Combine partners
+    p_tabs = pd.concat([pd.read_csv(base_url + "p1"), 
+                        pd.read_csv(base_url + "p2"), 
+                        pd.read_csv(base_url + "p3")], ignore_index=True)
+    return master, p_tabs
 
-    master = fetch_and_clean("Hiscox543")
-    p1 = fetch_and_clean("p1")
-    p2 = fetch_and_clean("p2")
-    p3 = fetch_and_clean("p3")
-    
-    # Identify the NAICS column (usually contains 'code' or 'naics')
-    naics_cols = [c for c in master.columns if 'code' in c or 'naics' in c]
-    if naics_cols:
-        master['clean_naics'] = master[naics_cols[0]].astype(str).str.extract(r'(\d{6})')
-    
-    return master, pd.concat([p1, p2, p3], ignore_index=True)
-
-# 2. DYNAMIC AI BRAIN
+# 2. AI BRAIN
 @st.cache_resource
-def build_brain(df):
+def load_ai(df):
     model = SentenceTransformer("all-MiniLM-L6-v2")
-    
-    # Find the COB and Description columns by keywords
-    cob_col = [c for c in df.columns if 'cob' in c or 'class' in c][0]
-    desc_col = [c for c in df.columns if 'desc' in c or 'industry' in c][0]
-    
-    corpus = (df[cob_col].astype(str) + " " + df[desc_col].astype(str)).tolist()
-    embeddings = model.encode(corpus, convert_to_numpy=True, show_progress_bar=False)
+    # Combines COB and Description for searching
+    corpus = (df.iloc[:, 0].astype(str) + " " + df.iloc[:, 1].astype(str)).tolist()
+    embeddings = model.encode(corpus, convert_to_numpy=True)
     index = faiss.IndexFlatL2(embeddings.shape[1])
     index.add(embeddings)
-    return model, index, cob_col
+    return model, index
 
-# --- INTERFACE ---
-st.title("🛡️ Hiscox Atlas 8.0 (Flexible Engine)")
-master_df, partner_df = load_live_data()
-model, index, active_cob_column = build_brain(master_df)
+master_df, partner_df = load_data()
+model, index = load_ai(master_df)
 
-query = st.text_input("Enter Industry, Description, or NAICS:")
+st.title("🛡️ Hiscox Appetite Atlas 8.0")
+query = st.text_input("Search Industry, NAICS, or Description:")
+
+def display_appetite_card(row):
+    """Creates a clean visual card for Appetite status"""
+    st.subheader(f"Class: {row.get('Hiscox_COB', 'Unknown')}")
+    
+    # Create 4 columns for the LOBs
+    c1, c2, c3, c4 = st.columns(4)
+    
+    # Dynamic check for Appetite Columns
+    lobs = {"GL": c1, "PL": c2, "BOP": c3, "Cyber": c4}
+    
+    for lob, col in lobs.items():
+        # Look for a column in the spreadsheet that matches the LOB name
+        status = "N/A"
+        for col_name in row.index:
+            if lob.lower() in col_name.lower():
+                status = str(row[col_name]).strip().upper()
+                break
+        
+        # Style based on Y/N
+        if "Y" in status:
+            col.success(f"**{lob}**: In Appetite ✅")
+        elif "N" in status:
+            col.error(f"**{lob}**: Out of Appetite ❌")
+        else:
+            col.info(f"**{lob}**: {status}")
 
 if query:
-    q = query.lower().strip()
-    
-    # WATERFALL 1: Check Partners first
-    p_match = partner_df[partner_df.apply(lambda r: q in str(r.values).lower(), axis=1)]
+    # WATERFALL 1: Partner Check
+    p_match = partner_df[partner_df.apply(lambda r: query.lower() in str(r.values).lower(), axis=1)]
     
     if not p_match.empty:
-        st.success("✅ Found in Partner Approval Tabs")
-        st.dataframe(p_match)
+        st.markdown("### ✅ Partner Approved Mapping Found")
+        for _, row in p_match.head(1).iterrows():
+            display_appetite_card(row)
     else:
-        # WATERFALL 2: AI Semantic Search
-        st.info("🔍 Searching Master 543 via AI...")
-        vec = model.encode([q], convert_to_numpy=True)
-        D, I = index.search(vec, k=3)
-        for idx in I[0]:
-            match = master_df.iloc[idx]
-            st.write(f"**{match[active_cob_column].upper()}**")
+        # WATERFALL 2: AI Search
+        st.markdown("### 🔍 AI Recommended Match (Master 543)")
+        vec = model.encode([query], convert_to_numpy=True)
+        D, I = index.search(vec, k=1)
+        display_appetite_card(master_df.iloc[I[0][0]])
