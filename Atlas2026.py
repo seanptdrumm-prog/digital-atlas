@@ -26,19 +26,22 @@ def load_and_scrub_data():
     
     def fetch_clean(sheet_name):
         df = pd.read_csv(base_url + sheet_name)
-        # KILL 'NAN': Force everything to be a string and replace empty cells with a clean space
         df = df.fillna("").astype(str)
-        # Clean hidden spaces from headers
         df.columns = df.columns.str.strip().str.upper()
         return df
 
     master = fetch_clean("Hiscox543")
-    partners = pd.concat([fetch_clean("p1"), fetch_clean("p2"), fetch_clean("p3")], ignore_index=True)
-    return master, partners
+    p1 = fetch_clean("p1")
+    p2 = fetch_clean("p2")
+    p3 = fetch_clean("p3")
+    
+    # Keeping tabs separate for diagnostic clarity
+    return master, p1, p2, p3
 
-master_df, partner_df = load_and_scrub_data()
+master_df, p1_df, p2_df, p3_df = load_and_scrub_data()
+partner_df = pd.concat([p1_df, p2_df, p3_df], ignore_index=True)
 
-# === 3. OVERRIDE GUARDRAILS (From your original intent) ===
+# === 3. OVERRIDE GUARDRAILS ===
 def check_overrides(q):
     if any(t in q for t in ["distributor", "dealer", "wholesale"]):
         return "Distribution, Wholesalers, Dealers"
@@ -51,18 +54,23 @@ def check_overrides(q):
     return None
 
 # === 4. UI RENDER ENGINE ===
-def display_rulebook_verdict(cob_name, match_type):
-    # Locate the exact row in Hiscox543 (The Rulebook)
-    # Using index 1 assuming Hiscox_COB is the 2nd column based on debug history
+def display_rulebook_verdict(cob_name, match_type, raw_bridge_match=None):
     rule_row = master_df[master_df.iloc[:, 1].str.strip().str.lower() == cob_name.lower()]
     
     if rule_row.empty:
-        st.error(f"⚠️ Mapped to Class: '{cob_name}', but it is missing from the Hiscox543 Master List.")
+        st.error(f"⚠️ App resolved to Class: '{cob_name}', but it cannot find this exact text in Column B of the Hiscox543 Master List.")
+        
+        # Diagnostic Box for Failures
+        with st.expander("🔍 Match Diagnostics (Why this failed)", expanded=True):
+            st.write(f"**1. Search Logic Triggered:** {match_type}")
+            st.write(f"**2. Target Class Attempted:** `{cob_name}`")
+            if raw_bridge_match is not None:
+                st.write("**3. Raw Data Pulled from Partner Tab:**")
+                st.dataframe(raw_bridge_match)
         return
     
     row = rule_row.iloc[0]
     
-    # Extract Y/N logic (Indices 2=GL, 3=PL, 4=BOP, 5=Cyber)
     gl = "Y" in row.iloc[2].upper()
     pl = "Y" in row.iloc[3].upper()
     bop = "Y" in row.iloc[4].upper()
@@ -72,10 +80,8 @@ def display_rulebook_verdict(cob_name, match_type):
     status = "IN APPETITE" if yes_count >= 2 else "OUT OF APPETITE"
     css_class = "app-yes" if status == "IN APPETITE" else "app-no"
     
-    # 1. Top Scorecard
-    st.markdown(f'<div class="scorecard {css_class}"><h2>{status}</h2><p>Class: <b>{row.iloc[1]}</b> | Match via: {match_type}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="scorecard {css_class}"><h2>{status}</h2><p>Class: <b>{row.iloc[1]}</b></p></div>', unsafe_allow_html=True)
     
-    # 2. LOB Grid
     c1, c2, c3, c4 = st.columns(4)
     lobs = [("GL", gl, c1), ("PL", pl, c2), ("BOP", bop, c3), ("Cyber", cyb, c4)]
     
@@ -85,57 +91,60 @@ def display_rulebook_verdict(cob_name, match_type):
         else:
             col.markdown(f'<div class="lob-box lob-no">{name}<br>NO</div>', unsafe_allow_html=True)
 
-    # 3. Clean Text Display (Killing the nan display)
     defn = row.iloc[7].strip()
     restr = row.iloc[8].strip() if len(row) > 8 else ""
     
     st.markdown("---")
-    st.info(f"**📖 Definition:** {defn if defn else 'No definition provided.'}")
+    st.info(f"**📖 Definition:** {defn if defn else 'No definition provided in sheet.'}")
     if restr:
         st.warning(f"**🚧 Restrictions:** {restr}")
 
+    # === NEW: DIAGNOSTIC BOX ===
+    with st.expander("🔍 Match Diagnostics (How the engine found this)"):
+        st.write(f"**1. Search Logic Triggered:** {match_type}")
+        st.write(f"**2. Target Class Pulled:** `{cob_name}`")
+        if raw_bridge_match is not None:
+            st.write("**3. Raw Row Found in Partner Tab (Bridge):**")
+            st.dataframe(raw_bridge_match)
+        st.write("**4. Raw Row Found in Master Hiscox543 Tab (Rulebook):**")
+        st.dataframe(rule_row)
+
 # === 5. THE WATERFALL SEARCH ENGINE ===
 st.title("🛡️ Atlas 2026: Underwriting Engine")
-query = st.text_input("Enter NAICS description, industry, or keyword:", placeholder="e.g., Landscaping, PR Firm, Yoga...")
+query = st.text_input("Enter NAICS description, industry, or keyword:")
 
 if query:
     q = query.lower().strip()
     target_cob = None
     match_source = ""
+    raw_bridge_data = None
 
-    # TIER 1: The Override Rules (Highest Priority)
     override_hit = check_overrides(q)
     if override_hit:
         target_cob = override_hit
-        match_source = "Underwriting Override Rule"
+        match_source = "Tier 1: Underwriting Override Rule"
 
-    # TIER 2: Exact Match in the Master Rulebook (Hiscox_COB Name)
     elif any(master_df.iloc[:, 1].str.strip().str.lower() == q):
         target_cob = master_df[master_df.iloc[:, 1].str.strip().str.lower() == q].iloc[0, 1]
-        match_source = "Exact Class Name Match"
+        match_source = "Tier 2: Exact Class Name Match (Master)"
 
-    # TIER 3: The NAICS Bridge (Partner Tabs)
     else:
-        # Search all columns in the partner tabs for an exact phrase match
         bridge_match = partner_df[partner_df.apply(lambda r: q in str(r.values).lower(), axis=1)]
         if not bridge_match.empty:
-            # Assume Hiscox_COB is in Column B (index 1) of the mapping sheets
-            target_cob = bridge_match.iloc[0, 1]
-            match_source = "NAICS Mapping (Partner Tabs)"
+            # Capturing the raw bridge data for the diagnostic box
+            raw_bridge_data = bridge_match.iloc[[0]] 
+            target_cob = bridge_match.iloc[0, 1] 
+            match_source = "Tier 3: NAICS Mapping (Partner Tabs)"
         
-        # TIER 4: Smart Fuzzy Fallback (Only fires if exact matches fail)
         else:
-            # We use token_set_ratio to ignore noise words (like "Store" or "Services")
             choices = master_df.iloc[:, 1].tolist()
             best_match = process.extractOne(q, choices, scorer=fuzz.token_set_ratio)
             
-            # Require an 85% confidence score to prevent "Knife Store" hallucinations
             if best_match and best_match[1] >= 85:
                 target_cob = best_match[0]
-                match_source = f"Smart AI Search ({int(best_match[1])}% Confidence)"
+                match_source = f"Tier 4: Smart AI Search ({int(best_match[1])}% Confidence)"
 
-    # === EXECUTE THE VERDICT ===
     if target_cob:
-        display_rulebook_verdict(target_cob, match_source)
+        display_rulebook_verdict(target_cob, match_source, raw_bridge_data)
     else:
-        st.error("❌ No match found. The search term did not hit any Master classes, NAICS mappings, or overrides. Please refine your keyword.")
+        st.error("❌ No match found.")
