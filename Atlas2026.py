@@ -1,5 +1,7 @@
 import io
 import re
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 from rapidfuzz import process, fuzz
@@ -11,14 +13,25 @@ st.set_page_config(page_title="Hiscox Atlas 2026", layout="wide")
 
 st.markdown("""
 <style>
-    body, .stApp { background-color: #000000; color: #FFFFFF; }
+    body, .stApp {
+        background-color: #000000;
+        color: #FFFFFF;
+    }
+
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+
     .stTextInput > div > div > input {
-        background-color: #222222;
+        background-color: #1a1a1a;
         color: #ffffff;
         border: 1px solid #ff4b4b;
-        height: 50px;
+        height: 52px;
         font-size: 20px;
+        border-radius: 8px;
     }
+
     .scorecard {
         padding: 20px;
         border-radius: 10px;
@@ -26,16 +39,19 @@ st.markdown("""
         margin-bottom: 20px;
         border: 2px solid #333;
     }
+
     .app-yes {
         background-color: #00cc66;
         color: black;
-        box-shadow: 0 0 15px rgba(0,204,102,0.4);
+        box-shadow: 0 0 15px rgba(0,204,102,0.35);
     }
+
     .app-no {
         background-color: #cc3333;
         color: white;
-        box-shadow: 0 0 15px rgba(204,51,51,0.4);
+        box-shadow: 0 0 15px rgba(204,51,51,0.35);
     }
+
     .lob-box {
         padding: 10px;
         border-radius: 5px;
@@ -43,11 +59,13 @@ st.markdown("""
         font-weight: bold;
         margin: 5px;
     }
+
     .lob-yes {
         background-color: #004d26;
         color: #00ff88;
         border: 1px solid #00ff88;
     }
+
     .lob-no {
         background-color: #4d0000;
         color: #ff4b4b;
@@ -56,7 +74,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Small stopgap only for true abbreviations / common broker shorthand
+# =========================
+# SESSION STATE
+# =========================
+if "feedback_log" not in st.session_state:
+    st.session_state.feedback_log = []
+
+# =========================
+# SMALL SYNONYM BRIDGE
+# =========================
 SYNONYMS = {
     "pr": "public relations",
     "hr": "human resources",
@@ -102,19 +128,19 @@ def load_data():
     partner = pd.read_excel(file_path, sheet_name="Partner_Mapping").fillna("")
     naics = pd.read_excel(file_path, sheet_name="NAICS_Mapping").fillna("")
 
-    # Standardize column names
     master.columns = [clean_text(c) for c in master.columns]
     partner.columns = [clean_text(c) for c in partner.columns]
     naics.columns = [clean_text(c) for c in naics.columns]
 
-    # Standardize text cells
     for df in [master, partner, naics]:
         for col in df.columns:
             df[col] = df[col].apply(clean_text)
 
-    # Master normalization
-    master["COB_NORM"] = master["Hiscox_COB"].apply(norm)
+    # Normalize master
+    if "Hiscox_COB" not in master.columns:
+        raise ValueError("Hiscox543 sheet must contain a 'Hiscox_COB' column.")
 
+    master["COB_NORM"] = master["Hiscox_COB"].apply(norm)
     valid_master_cobs = set(master["COB_NORM"].dropna().tolist())
 
     # Partner optional filter for Active
@@ -123,7 +149,7 @@ def load_data():
         if active_nonblank > 0:
             partner = partner[partner["Active"].apply(looks_like_active_yes)].copy()
 
-    # Normalize partner fields
+    # Ensure partner columns exist
     for col in ["Partner", "Partner_Description", "Partner_Secondary_Description", "Hiscox_COB"]:
         if col not in partner.columns:
             partner[col] = ""
@@ -133,31 +159,30 @@ def load_data():
     partner["SECONDARY_NORM"] = partner["Partner_Secondary_Description"].apply(apply_synonyms)
     partner["COB_NORM"] = partner["Hiscox_COB"].apply(norm)
 
-    # Keep valid master COB rows, but allow OOA through
     partner = partner[
         partner["COB_NORM"].isin(valid_master_cobs) | (partner["COB_NORM"] == "ooa")
     ].copy()
 
-    # NAICS normalization
+    # Ensure NAICS columns exist
     for col in ["Hiscox_COB", "NAICS_Description", "NAICS_Title", "NAICS_Code"]:
         if col not in naics.columns:
             naics[col] = ""
 
     naics["NAICS_DESC_NORM"] = naics["NAICS_Description"].apply(apply_synonyms)
     naics["NAICS_TITLE_NORM"] = naics["NAICS_Title"].apply(apply_synonyms)
-    naics["NAICS_CODE_NORM"] = naics["NAICS_Code"].apply(lambda x: re.sub(r"\\D", "", str(x)))
+    naics["NAICS_CODE_NORM"] = naics["NAICS_Code"].apply(lambda x: re.sub(r"\D", "", str(x)))
     naics["COB_NORM"] = naics["Hiscox_COB"].apply(norm)
 
     naics = naics[
         naics["COB_NORM"].isin(valid_master_cobs) | (naics["COB_NORM"] == "ooa")
     ].copy()
 
-    # Precompute master exact choices
     master_choices = master["Hiscox_COB"].dropna().astype(str).tolist()
+    master_choices_sorted = sorted(set(master_choices), key=lambda x: x.lower())
 
-    return master, partner, naics, master_choices
+    return master, partner, naics, master_choices, master_choices_sorted
 
-master_df, partner_df, naics_df, master_choices = load_data()
+master_df, partner_df, naics_df, master_choices, master_choices_sorted = load_data()
 
 # =========================
 # OVERRIDE RULES
@@ -168,7 +193,10 @@ def check_overrides(q):
             "target_cob": "Distribution, Wholesalers, Dealers and Other Sales",
             "logic": "Override rule",
             "confidence": 100,
-            "matched_text": "distribution/dealer override"
+            "matched_text": "distribution/dealer override",
+            "source_type": "override",
+            "raw_score": None,
+            "partner": ""
         }
 
     if "auto" in q and "repair" in q:
@@ -176,7 +204,10 @@ def check_overrides(q):
             "target_cob": "Auto, Car, Truck, Boat",
             "logic": "Override rule",
             "confidence": 100,
-            "matched_text": "auto repair override"
+            "matched_text": "auto repair override",
+            "source_type": "override",
+            "raw_score": None,
+            "partner": ""
         }
 
     if any(t in q for t in ["church", "temple", "mosque", "worship"]):
@@ -184,7 +215,10 @@ def check_overrides(q):
             "target_cob": "Religious",
             "logic": "Override rule",
             "confidence": 100,
-            "matched_text": "religious override"
+            "matched_text": "religious override",
+            "source_type": "override",
+            "raw_score": None,
+            "partner": ""
         }
 
     if ("doctor" in q or "doctors" in q) and not any(t in q for t in ["psych", "psychi", "veterin", "vet", "dental", "therapy", "clinic"]):
@@ -192,7 +226,10 @@ def check_overrides(q):
             "target_cob": "Physicians Office",
             "logic": "Override rule",
             "confidence": 100,
-            "matched_text": "doctor override"
+            "matched_text": "doctor override",
+            "source_type": "override",
+            "raw_score": None,
+            "partner": ""
         }
 
     return None
@@ -214,7 +251,7 @@ def build_candidate(target_cob, logic, confidence, matched_text, source_type, ra
 def dedupe_best_candidates(candidates, limit=3):
     best = {}
     for c in candidates:
-        key = norm(c["target_cob"]) + "||" + c["logic"]
+        key = norm(c["target_cob"]) + "||" + c["logic"] + "||" + c.get("partner", "")
         if key not in best or c["confidence"] > best[key]["confidence"]:
             best[key] = c
 
@@ -237,45 +274,24 @@ def dedupe_best_candidates(candidates, limit=3):
 # =========================
 # MATCH BUCKETS
 # =========================
-def exact_partner_match(q_clean, secondary_clean="", selected_partner=""):
-    df = partner_df.copy()
-
-    if selected_partner:
-        df = df[df["PARTNER_NORM"] == norm(selected_partner)]
-
+def exact_partner_match(q_clean):
     candidates = []
+    hits = partner_df[partner_df["DESC_NORM"] == q_clean]
 
-    # Exact primary + exact secondary boost
-    if secondary_clean:
-        hits = df[(df["DESC_NORM"] == q_clean) & (df["SECONDARY_NORM"] == secondary_clean)]
-        for _, r in hits.iterrows():
-            candidates.append(build_candidate(
-                target_cob=r["Hiscox_COB"],
-                logic="Exact partner primary + secondary",
-                confidence=100,
-                matched_text=f"{r['Partner_Description']} | {r['Partner_Secondary_Description']}",
-                source_type="partner_exact",
-                partner_name=r["Partner"]
-            ))
-
-    # Exact primary only
-    hits = df[df["DESC_NORM"] == q_clean]
     for _, r in hits.iterrows():
         candidates.append(build_candidate(
             target_cob=r["Hiscox_COB"],
-            logic="Exact partner primary",
+            logic="Exact partner shortcut",
             confidence=98,
             matched_text=r["Partner_Description"],
             source_type="partner_exact",
             partner_name=r["Partner"]
         ))
-
     return candidates
 
 def exact_naics_match(q_clean):
     candidates = []
 
-    # Exact description
     hits = naics_df[naics_df["NAICS_DESC_NORM"] == q_clean]
     for _, r in hits.iterrows():
         candidates.append(build_candidate(
@@ -286,7 +302,6 @@ def exact_naics_match(q_clean):
             source_type="naics_exact"
         ))
 
-    # Exact title
     hits = naics_df[naics_df["NAICS_TITLE_NORM"] == q_clean]
     for _, r in hits.iterrows():
         candidates.append(build_candidate(
@@ -297,8 +312,7 @@ def exact_naics_match(q_clean):
             source_type="naics_exact"
         ))
 
-    # Exact code
-    q_digits = re.sub(r"\\D", "", q_clean)
+    q_digits = re.sub(r"\D", "", q_clean)
     if q_digits and len(q_digits) == 6:
         hits = naics_df[naics_df["NAICS_CODE_NORM"] == q_digits]
         for _, r in hits.iterrows():
@@ -312,12 +326,8 @@ def exact_naics_match(q_clean):
 
     return candidates
 
-def fuzzy_partner_candidates(q_clean, selected_partner="", limit=8):
-    df = partner_df.copy()
-    if selected_partner:
-        df = df[df["PARTNER_NORM"] == norm(selected_partner)]
-
-    phrases = df["DESC_NORM"].dropna().tolist()
+def fuzzy_partner_candidates(q_clean, limit=8):
+    phrases = partner_df["DESC_NORM"].dropna().tolist()
     phrases = [p for p in phrases if p]
 
     if not phrases:
@@ -330,14 +340,14 @@ def fuzzy_partner_candidates(q_clean, selected_partner="", limit=8):
         if score < 82:
             continue
 
-        matching_rows = df[df["DESC_NORM"] == phrase]
+        matching_rows = partner_df[partner_df["DESC_NORM"] == phrase]
         for _, r in matching_rows.iterrows():
             length_penalty = abs(len(phrase) - len(q_clean)) * 0.35
             confidence = min(96, score + 6 - length_penalty)
 
             candidates.append(build_candidate(
                 target_cob=r["Hiscox_COB"],
-                logic="Fuzzy partner primary",
+                logic="Fuzzy partner shortcut",
                 confidence=confidence,
                 matched_text=r["Partner_Description"],
                 source_type="partner_fuzzy",
@@ -348,13 +358,13 @@ def fuzzy_partner_candidates(q_clean, selected_partner="", limit=8):
     return candidates
 
 def fuzzy_naics_candidates(q_clean, limit=8):
+    candidates = []
+
     desc_choices = naics_df["NAICS_DESC_NORM"].dropna().tolist()
     desc_choices = [p for p in desc_choices if p]
 
     title_choices = naics_df["NAICS_TITLE_NORM"].dropna().tolist()
     title_choices = [p for p in title_choices if p]
-
-    candidates = []
 
     if desc_choices:
         raw_desc = process.extract(q_clean, list(set(desc_choices)), scorer=fuzz.token_set_ratio, limit=limit)
@@ -401,6 +411,7 @@ def fuzzy_cob_fallback(q_clean):
     for phrase, score, _ in raw:
         if score < 88:
             continue
+
         length_penalty = abs(len(norm(phrase)) - len(q_clean)) * 0.40
         confidence = min(90, score - 2 - length_penalty)
 
@@ -476,36 +487,25 @@ def get_appetite_data(cob_name):
 # =========================
 # CORE SEARCH ENGINE
 # =========================
-def search_engine(raw_query, secondary_query="", selected_partner=""):
+def search_engine(raw_query):
     q_clean = apply_synonyms(raw_query)
-    secondary_clean = apply_synonyms(secondary_query) if secondary_query else ""
-
     all_candidates = []
 
-    # 1. Overrides
     override = check_overrides(q_clean)
     if override:
         all_candidates.append(override)
 
-    # 2. Exact partner
-    all_candidates.extend(exact_partner_match(q_clean, secondary_clean, selected_partner))
-
-    # 3. Exact NAICS
+    all_candidates.extend(exact_partner_match(q_clean))
     all_candidates.extend(exact_naics_match(q_clean))
 
-    # If exact/override exists, stop the waterfall there
     exactish = [c for c in all_candidates if c["source_type"] in {"override", "partner_exact", "naics_exact"}]
     if exactish:
         ranked = dedupe_best_candidates(exactish, limit=3)
         return ranked[0], ranked, q_clean
 
-    # 4. Fuzzy partner
-    all_candidates.extend(fuzzy_partner_candidates(q_clean, selected_partner=selected_partner, limit=10))
-
-    # 5. Fuzzy NAICS
+    all_candidates.extend(fuzzy_partner_candidates(q_clean, limit=10))
     all_candidates.extend(fuzzy_naics_candidates(q_clean, limit=10))
 
-    # 6. Fuzzy COB fallback only if nothing stronger exists
     if not all_candidates:
         all_candidates.extend(fuzzy_cob_fallback(q_clean))
 
@@ -516,7 +516,6 @@ def search_engine(raw_query, secondary_query="", selected_partner=""):
 
     best = ranked[0]
 
-    # Final acceptance rules by source
     accepted = False
     if best["source_type"] == "partner_fuzzy" and best["confidence"] >= 84:
         accepted = True
@@ -562,12 +561,10 @@ def display_verdict(cob_name):
     if data["restr"]:
         st.warning(f"**🚧 Restrictions:** {data['restr']}")
 
-def render_diagnostics(raw_query, q_clean, selected_partner, secondary_query, best_match, top_candidates):
+def render_diagnostics(raw_query, q_clean, best_match, top_candidates):
     with st.expander("⚙️ Tuning & Diagnostics", expanded=True):
         st.write(f"**Original query:** `{raw_query}`")
         st.write(f"**Cleaned query:** `{q_clean}`")
-        st.write(f"**Selected partner:** `{selected_partner if selected_partner else 'None'}`")
-        st.write(f"**Secondary description:** `{secondary_query if secondary_query else 'None'}`")
 
         if best_match:
             st.write("---")
@@ -579,7 +576,7 @@ def render_diagnostics(raw_query, q_clean, selected_partner, secondary_query, be
                 st.write(f"- Raw fuzzy score: {best_match['raw_score']}%")
             st.write(f"- Matched text: `{best_match['matched_text']}`")
             if best_match.get("partner"):
-                st.write(f"- Partner source: {best_match['partner']}")
+                st.write(f"- Partner shortcut source: **{best_match['partner']}**")
 
         st.write("---")
         st.write("**Top engine candidates**")
@@ -590,34 +587,154 @@ def render_diagnostics(raw_query, q_clean, selected_partner, secondary_query, be
                     line += f" (raw {c['raw_score']}%)"
                 st.write(line)
                 st.caption(f"Matched text: {c['matched_text']}")
+                if c.get("partner"):
+                    st.caption(f"Partner source: {c['partner']}")
         else:
             st.write("No candidates found.")
 
 # =========================
-# UI
+# FEEDBACK LOG UI
+# =========================
+def render_feedback_ui(raw_query, q_clean, best_match, top_candidates):
+    st.markdown("---")
+    st.subheader("📝 Review This Match")
+
+    if not top_candidates:
+        st.write("No candidates available to review for this query.")
+        return
+
+    candidate_1 = top_candidates[0] if len(top_candidates) > 0 else None
+    candidate_2 = top_candidates[1] if len(top_candidates) > 1 else None
+    candidate_3 = top_candidates[2] if len(top_candidates) > 2 else None
+
+    widget_key_base = re.sub(r"[^a-zA-Z0-9_]", "_", q_clean)[:80] or "query"
+
+    options = []
+    option_map = {}
+
+    if candidate_1:
+        label = f"Accept current match — {candidate_1['target_cob']}"
+        options.append(label)
+        option_map[label] = ("candidate_1", candidate_1["target_cob"])
+
+    if candidate_2:
+        label = f"Use candidate 2 — {candidate_2['target_cob']}"
+        options.append(label)
+        option_map[label] = ("candidate_2", candidate_2["target_cob"])
+
+    if candidate_3:
+        label = f"Use candidate 3 — {candidate_3['target_cob']}"
+        options.append(label)
+        option_map[label] = ("candidate_3", candidate_3["target_cob"])
+
+    none_label = "None of these / choose a different COB"
+    options.append(none_label)
+    option_map[none_label] = ("manual", "")
+
+    selected_action = st.radio(
+        "How should this result be logged?",
+        options=options,
+        index=0,
+        key=f"feedback_choice_{widget_key_base}"
+    )
+
+    manual_cob = ""
+    if option_map[selected_action][0] == "manual":
+        manual_cob = st.selectbox(
+            "Choose the correct Hiscox_COB",
+            options=[""] + master_choices_sorted,
+            index=0,
+            key=f"manual_cob_{widget_key_base}"
+        )
+
+    notes = st.text_input(
+        "Optional notes",
+        placeholder="Why was this changed?",
+        key=f"feedback_notes_{widget_key_base}"
+    )
+
+    if st.button("Save Feedback", key=f"save_feedback_{widget_key_base}"):
+        selection_type, selected_cob = option_map[selected_action]
+
+        if selection_type == "manual":
+            if not manual_cob:
+                st.warning("Please choose a correct Hiscox_COB before saving.")
+                return
+            final_selection = manual_cob
+        else:
+            final_selection = selected_cob
+
+        row = {
+            "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Input_Query": raw_query,
+            "Cleaned_Query": q_clean,
+            "Engine_Chosen_COB": best_match["target_cob"] if best_match else "",
+            "Engine_Logic": best_match["logic"] if best_match else "No confident match",
+            "Engine_Confidence": best_match["confidence"] if best_match else "",
+            "Engine_Partner_Source": best_match.get("partner", "") if best_match else "",
+            "Candidate_1": candidate_1["target_cob"] if candidate_1 else "",
+            "Candidate_1_Logic": candidate_1["logic"] if candidate_1 else "",
+            "Candidate_1_Confidence": candidate_1["confidence"] if candidate_1 else "",
+            "Candidate_1_Partner": candidate_1.get("partner", "") if candidate_1 else "",
+            "Candidate_2": candidate_2["target_cob"] if candidate_2 else "",
+            "Candidate_2_Logic": candidate_2["logic"] if candidate_2 else "",
+            "Candidate_2_Confidence": candidate_2["confidence"] if candidate_2 else "",
+            "Candidate_2_Partner": candidate_2.get("partner", "") if candidate_2 else "",
+            "Candidate_3": candidate_3["target_cob"] if candidate_3 else "",
+            "Candidate_3_Logic": candidate_3["logic"] if candidate_3 else "",
+            "Candidate_3_Confidence": candidate_3["confidence"] if candidate_3 else "",
+            "Candidate_3_Partner": candidate_3.get("partner", "") if candidate_3 else "",
+            "User_Selection_Type": selection_type,
+            "Final_Selected_COB": final_selection,
+            "Notes": notes
+        }
+
+        st.session_state.feedback_log.append(row)
+        st.success("Feedback saved to Correction Log.")
+
+def render_feedback_log():
+    st.markdown("---")
+    st.header("📋 Correction Log")
+
+    if not st.session_state.feedback_log:
+        st.write("No feedback saved yet.")
+        return
+
+    feedback_df = pd.DataFrame(st.session_state.feedback_log)
+    st.dataframe(feedback_df, use_container_width=True)
+
+    csv_buffer = io.StringIO()
+    feedback_df.to_csv(csv_buffer, index=False)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.download_button(
+            label="⬇️ Download Correction Log (.csv)",
+            data=csv_buffer.getvalue(),
+            file_name="Atlas_Correction_Log.csv",
+            mime="text/csv"
+        )
+
+    with col2:
+        if st.button("Clear Feedback Log"):
+            st.session_state.feedback_log = []
+            st.experimental_rerun()
+
+# =========================
+# MAIN UI
 # =========================
 st.title("🛡️ Atlas 2026: Underwriting Engine")
 st.caption("Prototype using Hiscox543 + Partner_Mapping + NAICS_Mapping")
 
-partner_options = [""] + sorted([p for p in partner_df["Partner"].dropna().astype(str).unique().tolist() if clean_text(p)])
-selected_partner = st.selectbox("Partner (optional)", partner_options, index=0)
-
 query = st.text_input(
-    "Enter business description, keyword, or 6-digit NAICS code",
-    placeholder="e.g., PR firm, jeweler, yoga studio, 541820"
-)
-
-secondary_query = st.text_input(
-    "Secondary description/details (optional, mainly for Talage)",
-    placeholder="Optional supporting detail"
+    "Search for a business description or 6-digit NAICS code",
+    placeholder="e.g., PR firm, jeweler, yoga studio, 541820",
+    label_visibility="collapsed"
 )
 
 if query:
-    best_match, top_candidates, q_clean = search_engine(
-        raw_query=query,
-        secondary_query=secondary_query,
-        selected_partner=selected_partner
-    )
+    best_match, top_candidates, q_clean = search_engine(query)
 
     if best_match:
         display_verdict(best_match["target_cob"])
@@ -627,11 +744,18 @@ if query:
     render_diagnostics(
         raw_query=query,
         q_clean=q_clean,
-        selected_partner=selected_partner,
-        secondary_query=secondary_query,
         best_match=best_match,
         top_candidates=top_candidates
     )
+
+    render_feedback_ui(
+        raw_query=query,
+        q_clean=q_clean,
+        best_match=best_match,
+        top_candidates=top_candidates
+    )
+
+render_feedback_log()
 
 # =========================
 # BATCH MODE
@@ -649,7 +773,6 @@ if uploaded_file:
         else:
             upload_df = pd.read_excel(uploaded_file)
 
-        # Try to detect the best text column
         candidate_cols = []
         for col in upload_df.columns:
             try:
@@ -658,12 +781,14 @@ if uploaded_file:
                 nonblank = (series.str.strip() != "").mean()
                 header_score = 0
                 col_norm = norm(col)
+
                 if any(k in col_norm for k in ["description", "industry", "business", "naics", "class", "activity"]):
                     header_score += 20
                 if avg_len > 6:
                     header_score += 10
                 if nonblank > 0.4:
                     header_score += 10
+
                 candidate_cols.append((col, header_score))
             except Exception:
                 pass
@@ -681,11 +806,7 @@ if uploaded_file:
                 if not raw_val.strip():
                     continue
 
-                best_match, top_candidates, q_clean = search_engine(
-                    raw_query=raw_val,
-                    secondary_query="",
-                    selected_partner=selected_partner
-                )
+                best_match, top_candidates, q_clean = search_engine(raw_val)
 
                 if best_match:
                     appetite = get_appetite_data(best_match["target_cob"])
