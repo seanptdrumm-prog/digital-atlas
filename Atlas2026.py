@@ -136,20 +136,17 @@ def load_data():
         for col in df.columns:
             df[col] = df[col].apply(clean_text)
 
-    # Normalize master
     if "Hiscox_COB" not in master.columns:
         raise ValueError("Hiscox543 sheet must contain a 'Hiscox_COB' column.")
 
     master["COB_NORM"] = master["Hiscox_COB"].apply(norm)
     valid_master_cobs = set(master["COB_NORM"].dropna().tolist())
 
-    # Partner optional filter for Active
     if "Active" in partner.columns:
         active_nonblank = partner["Active"].apply(norm).ne("").sum()
         if active_nonblank > 0:
             partner = partner[partner["Active"].apply(looks_like_active_yes)].copy()
 
-    # Ensure partner columns exist
     for col in ["Partner", "Partner_Description", "Partner_Secondary_Description", "Hiscox_COB"]:
         if col not in partner.columns:
             partner[col] = ""
@@ -163,7 +160,6 @@ def load_data():
         partner["COB_NORM"].isin(valid_master_cobs) | (partner["COB_NORM"] == "ooa")
     ].copy()
 
-    # Ensure NAICS columns exist
     for col in ["Hiscox_COB", "NAICS_Description", "NAICS_Title", "NAICS_Code"]:
         if col not in naics.columns:
             naics[col] = ""
@@ -221,7 +217,7 @@ def check_overrides(q):
             "partner": ""
         }
 
-    if ("doctor" in q or "doctors" in q) and not any(t in q for t in ["psych", "psychi", "veterin", "vet", "dental", "therapy", "clinic"]):
+    if ("doctor" in q or "doctors" in q) and not any(t in q for t in ["psych", "psychi", "veterin", "vet", "dental", "therapy", "clinic", "eye", "optomet", "ophthalm"]):
         return {
             "target_cob": "Physicians Office",
             "logic": "Override rule",
@@ -530,6 +526,74 @@ def search_engine(raw_query):
     return None, ranked, q_clean
 
 # =========================
+# REVIEW RECORD HELPERS
+# =========================
+def candidate_field(candidates, idx, field):
+    if len(candidates) > idx:
+        return candidates[idx].get(field, "")
+    return ""
+
+def build_review_record(raw_val, best_match, top_candidates, q_clean):
+    appetite = get_appetite_data(best_match["target_cob"]) if best_match else None
+
+    return {
+        "Input_Description": raw_val,
+        "Cleaned_Query": q_clean,
+        "Engine_Chosen_COB": appetite["real_name"] if appetite else (best_match["target_cob"] if best_match else ""),
+        "Engine_Logic": best_match["logic"] if best_match else "No confident match",
+        "Engine_Confidence": best_match["confidence"] if best_match else "",
+        "Engine_Partner_Source": best_match.get("partner", "") if best_match else "",
+        "Engine_Appetite": appetite["status"] if appetite else "Unknown",
+        "Engine_PL": "Yes" if appetite and appetite["pl"] else "No",
+        "Engine_GL": "Yes" if appetite and appetite["gl"] else "No",
+        "Engine_BOP": "Yes" if appetite and appetite["bop"] else "No",
+        "Engine_Cyber": "Yes" if appetite and appetite["cyb"] else "No",
+
+        "Candidate_1": candidate_field(top_candidates, 0, "target_cob"),
+        "Candidate_1_Logic": candidate_field(top_candidates, 0, "logic"),
+        "Candidate_1_Confidence": candidate_field(top_candidates, 0, "confidence"),
+        "Candidate_1_Partner": candidate_field(top_candidates, 0, "partner"),
+
+        "Candidate_2": candidate_field(top_candidates, 1, "target_cob"),
+        "Candidate_2_Logic": candidate_field(top_candidates, 1, "logic"),
+        "Candidate_2_Confidence": candidate_field(top_candidates, 1, "confidence"),
+        "Candidate_2_Partner": candidate_field(top_candidates, 1, "partner"),
+
+        "Candidate_3": candidate_field(top_candidates, 2, "target_cob"),
+        "Candidate_3_Logic": candidate_field(top_candidates, 2, "logic"),
+        "Candidate_3_Confidence": candidate_field(top_candidates, 2, "confidence"),
+        "Candidate_3_Partner": candidate_field(top_candidates, 2, "partner"),
+
+        "Final_Selected_COB": "",
+        "Reviewer_Notes": ""
+    }
+
+def build_excel_review_file(review_df):
+    output = io.BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        review_df.to_excel(writer, index=False, sheet_name="Batch_Review")
+
+        reference_df = pd.DataFrame({"Valid_Hiscox_COB": master_choices_sorted})
+        reference_df.to_excel(writer, index=False, sheet_name="Valid_Hiscox_COBs")
+
+        ws = writer.book["Batch_Review"]
+        ws.freeze_panes = "A2"
+
+        for column_cells in ws.columns:
+            max_length = 0
+            col_letter = column_cells[0].column_letter
+            for cell in column_cells:
+                try:
+                    max_length = max(max_length, len(str(cell.value)))
+                except Exception:
+                    pass
+            ws.column_dimensions[col_letter].width = min(max(max_length + 2, 14), 40)
+
+    output.seek(0)
+    return output.getvalue()
+
+# =========================
 # RENDER
 # =========================
 def display_verdict(cob_name):
@@ -598,10 +662,6 @@ def render_diagnostics(raw_query, q_clean, best_match, top_candidates):
 def render_feedback_ui(raw_query, q_clean, best_match, top_candidates):
     st.markdown("---")
     st.subheader("📝 Review This Match")
-
-    if not top_candidates:
-        st.write("No candidates available to review for this query.")
-        return
 
     candidate_1 = top_candidates[0] if len(top_candidates) > 0 else None
     candidate_2 = top_candidates[1] if len(top_candidates) > 1 else None
@@ -762,7 +822,7 @@ render_feedback_log()
 # =========================
 st.markdown("---")
 st.header("📥 Batch Class Mapping")
-st.write("Upload a CSV or Excel file to map business descriptions in bulk.")
+st.write("Upload a CSV or Excel file to generate a review workbook.")
 
 uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
 
@@ -782,7 +842,7 @@ if uploaded_file:
                 header_score = 0
                 col_norm = norm(col)
 
-                if any(k in col_norm for k in ["description", "industry", "business", "naics", "class", "activity"]):
+                if any(k in col_norm for k in ["description", "industry", "business", "naics", "class", "activity", "partner"]):
                     header_score += 20
                 if avg_len > 6:
                     header_score += 10
@@ -801,48 +861,22 @@ if uploaded_file:
         else:
             st.success(f"Using input column: **{text_column}**")
 
-            results = []
+            review_rows = []
             for raw_val in upload_df[text_column].fillna("").astype(str):
                 if not raw_val.strip():
                     continue
 
                 best_match, top_candidates, q_clean = search_engine(raw_val)
+                review_rows.append(build_review_record(raw_val, best_match, top_candidates, q_clean))
 
-                if best_match:
-                    appetite = get_appetite_data(best_match["target_cob"])
-                    results.append({
-                        "Input_Description": raw_val,
-                        "Hiscox_COB": appetite["real_name"] if appetite else best_match["target_cob"],
-                        "Confidence": best_match["confidence"],
-                        "Match_Status": best_match["logic"],
-                        "Appetite": appetite["status"] if appetite else "Unknown",
-                        "PL": "Yes" if appetite and appetite["pl"] else "No",
-                        "GL": "Yes" if appetite and appetite["gl"] else "No",
-                        "BOP": "Yes" if appetite and appetite["bop"] else "No",
-                        "Cyber": "Yes" if appetite and appetite["cyb"] else "No",
-                    })
-                else:
-                    results.append({
-                        "Input_Description": raw_val,
-                        "Hiscox_COB": "No Match Found",
-                        "Confidence": "",
-                        "Match_Status": "No confident match",
-                        "Appetite": "Unknown",
-                        "PL": "",
-                        "GL": "",
-                        "BOP": "",
-                        "Cyber": "",
-                    })
+            review_df = pd.DataFrame(review_rows)
+            st.dataframe(review_df.head(50), use_container_width=True)
 
-            result_df = pd.DataFrame(results)
-            st.dataframe(result_df, use_container_width=True)
-
-            csv_buffer = io.StringIO()
-            result_df.to_csv(csv_buffer, index=False)
+            excel_bytes = build_excel_review_file(review_df)
 
             st.download_button(
-                label="⬇️ Download Results (.csv)",
-                data=csv_buffer.getvalue(),
-                file_name="Atlas_Batch_Results.csv",
-                mime="text/csv"
+                label="⬇️ Download Review Workbook (.xlsx)",
+                data=excel_bytes,
+                file_name="Atlas_Batch_Review.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
