@@ -71,6 +71,11 @@ st.markdown("""
         color: #ff4b4b;
         border: 1px solid #ff4b4b;
     }
+
+    .small-note {
+        font-size: 0.9rem;
+        color: #cccccc;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,6 +84,12 @@ st.markdown("""
 # =========================
 if "feedback_log" not in st.session_state:
     st.session_state.feedback_log = []
+
+if "batch_review_rows" not in st.session_state:
+    st.session_state.batch_review_rows = []
+
+if "batch_review_filename" not in st.session_state:
+    st.session_state.batch_review_filename = ""
 
 # =========================
 # SMALL SYNONYM BRIDGE
@@ -89,6 +100,7 @@ SYNONYMS = {
     "it": "information technology",
     "cpa": "certified public accountant",
     "cpas": "certified public accountants",
+    "ad": "advertising",
 }
 
 # =========================
@@ -181,31 +193,120 @@ def load_data():
 master_df, partner_df, naics_df, master_choices, master_choices_sorted = load_data()
 
 # =========================
+# HINTS / PATCH V1
+# =========================
+def get_weighted_hints(q_clean):
+    """
+    Returns:
+      - forced_candidates: list of very strong target suggestions
+      - weighted_hints: dict of target_cob -> bonus
+    """
+    forced_candidates = []
+    weighted_hints = {}
+
+    def add_hint(cob_name, bonus):
+        weighted_hints[cob_name] = weighted_hints.get(cob_name, 0) + bonus
+
+    q = q_clean
+
+    # -------------------------
+    # Dealer / distributor / wholesale
+    # -------------------------
+    has_dealerish = any(t in q for t in [
+        "dealer", "dealers", "distributor", "distributors",
+        "wholesale", "wholesaler", "wholesalers"
+    ])
+
+    carve_out_retail = any(t in q for t in [
+        "book", "poster", "art", "gallery", "store", "retail", "apparel", "clothing"
+    ])
+
+    carve_out_auto = "auto" in q or "car " in q or q.startswith("car") or "truck" in q
+    carve_out_materials = "construction materials" in q or "masonry" in q or "hardwood" in q or "flooring" in q
+
+    if has_dealerish:
+        if not (carve_out_retail or carve_out_auto or carve_out_materials):
+            add_hint("Distribution, Wholesalers, Dealers and Other Sales", 10)
+
+    # -------------------------
+    # Common-sense boosts
+    # -------------------------
+    if "ad agency" in q or ("advertising" in q and "agency" in q):
+        add_hint("Advertising", 18)
+
+    if "eye doctor" in q or "optomet" in q or "ophthalm" in q:
+        add_hint("Optometrist/Ophthalmologist", 20)
+
+    if "dog daycare" in q or ("pet" in q and "daycare" in q):
+        add_hint("Pet daycare", 18)
+
+    if "computer consultant" in q or "programmer" in q or "software developer" in q:
+        add_hint("IT Consulting", 16)
+
+    if "apparel retailer" in q or "clothing store" in q or "apparel store" in q:
+        add_hint("Clothing/apparel stores", 18)
+
+    if "air conditioning service" in q or "hvac" in q:
+        add_hint("Air conditioning systems installation and repair", 20)
+
+    if "builder" in q:
+        add_hint("General Contractor - Construction and installation only", 14)
+
+    if "deck builder" in q:
+        add_hint("Carpentry (interior & exterior)", 20)
+
+    if "electrical contractor" in q or ("electrical" in q and "contractor" in q):
+        add_hint("Electrical work (interior only)", 20)
+
+    if "roofing contractor" in q or ("roofing" in q and "contractor" in q):
+        add_hint("Roofing", 18)
+
+    if "auto dealer" in q or ("auto" in q and "sales" in q):
+        add_hint("OOA", 20)
+
+    if "auto repair" in q or ("mechanical" in q and "auto" in q):
+        add_hint("OOA", 20)
+
+    if "contract carrier" in q or "trucking" in q:
+        add_hint("OOA", 16)
+
+    if "assisted living" in q:
+        add_hint("OOA", 18)
+
+    if "adult day health" in q or "adhc" in q:
+        add_hint("OOA", 18)
+
+    if "animal hospital" in q:
+        add_hint("OOA", 14)
+
+    if "construction materials" in q:
+        add_hint("OOA", 16)
+
+    if "health club" in q:
+        add_hint("OOA", 14)
+
+    if "health food store" in q:
+        add_hint("OOA", 14)
+
+    if "full service restaurant" in q:
+        add_hint("OOA", 10)
+
+    if "book store" in q or "bookstore" in q:
+        add_hint("Book & Magazine Stores", 20)
+
+    if "poster store" in q or ("poster" in q and "store" in q):
+        add_hint("Art, Picture, & Poster Stores", 20)
+
+    if "art gallery" in q or ("gallery" in q and "art" in q):
+        add_hint("Art Gallery/Dealer", 18)
+
+    return forced_candidates, weighted_hints
+
+# =========================
 # OVERRIDE RULES
 # =========================
 def check_overrides(q):
-    if any(t in q for t in ["distributor", "distributors", "dealer", "dealers", "wholesaler", "wholesalers", "wholesale"]):
-        return {
-            "target_cob": "Distribution, Wholesalers, Dealers and Other Sales",
-            "logic": "Override rule",
-            "confidence": 100,
-            "matched_text": "distribution/dealer override",
-            "source_type": "override",
-            "raw_score": None,
-            "partner": ""
-        }
-
-    if "auto" in q and "repair" in q:
-        return {
-            "target_cob": "Auto, Car, Truck, Boat",
-            "logic": "Override rule",
-            "confidence": 100,
-            "matched_text": "auto repair override",
-            "source_type": "override",
-            "raw_score": None,
-            "partner": ""
-        }
-
+    # Hard overrides only where we are comfortable being very direct
     if any(t in q for t in ["church", "temple", "mosque", "worship"]):
         return {
             "target_cob": "Religious",
@@ -217,7 +318,9 @@ def check_overrides(q):
             "partner": ""
         }
 
-    if ("doctor" in q or "doctors" in q) and not any(t in q for t in ["psych", "psychi", "veterin", "vet", "dental", "therapy", "clinic", "eye", "optomet", "ophthalm"]):
+    if ("doctor" in q or "doctors" in q) and not any(
+        t in q for t in ["psych", "psychi", "veterin", "vet", "dental", "therapy", "clinic", "eye", "optomet", "ophthalm"]
+    ):
         return {
             "target_cob": "Physicians Office",
             "logic": "Override rule",
@@ -243,6 +346,13 @@ def build_candidate(target_cob, logic, confidence, matched_text, source_type, ra
         "raw_score": None if raw_score is None else int(round(raw_score)),
         "partner": partner_name or ""
     }
+
+def apply_hint_bonus(candidate, weighted_hints):
+    bonus = weighted_hints.get(candidate["target_cob"], 0)
+    if bonus:
+        candidate["confidence"] = int(min(100, candidate["confidence"] + bonus))
+        candidate["logic"] = f"{candidate['logic']} + hint"
+    return candidate
 
 def dedupe_best_candidates(candidates, limit=3):
     best = {}
@@ -339,7 +449,20 @@ def fuzzy_partner_candidates(q_clean, limit=8):
         matching_rows = partner_df[partner_df["DESC_NORM"] == phrase]
         for _, r in matching_rows.iterrows():
             length_penalty = abs(len(phrase) - len(q_clean)) * 0.35
-            confidence = min(96, score + 6 - length_penalty)
+
+            # Base fuzzy partner confidence
+            confidence = score + 4 - length_penalty
+
+            # Talage penalty: can suggest, not dominate
+            partner_name = clean_text(r["Partner"])
+            if norm(partner_name) == "talage":
+                confidence -= 8
+
+            # London / Insureon still slightly more trusted than fuzzy Talage
+            if norm(partner_name) in {"london", "insureon"}:
+                confidence += 1
+
+            confidence = min(94, confidence)
 
             candidates.append(build_candidate(
                 target_cob=r["Hiscox_COB"],
@@ -348,7 +471,7 @@ def fuzzy_partner_candidates(q_clean, limit=8):
                 matched_text=r["Partner_Description"],
                 source_type="partner_fuzzy",
                 raw_score=score,
-                partner_name=r["Partner"]
+                partner_name=partner_name
             ))
 
     return candidates
@@ -370,7 +493,7 @@ def fuzzy_naics_candidates(q_clean, limit=8):
             rows = naics_df[naics_df["NAICS_DESC_NORM"] == phrase]
             for _, r in rows.iterrows():
                 length_penalty = abs(len(phrase) - len(q_clean)) * 0.30
-                confidence = min(94, score + 3 - length_penalty)
+                confidence = min(95, score + 4 - length_penalty)
                 candidates.append(build_candidate(
                     target_cob=r["Hiscox_COB"],
                     logic="Fuzzy NAICS description",
@@ -388,7 +511,7 @@ def fuzzy_naics_candidates(q_clean, limit=8):
             rows = naics_df[naics_df["NAICS_TITLE_NORM"] == phrase]
             for _, r in rows.iterrows():
                 length_penalty = abs(len(phrase) - len(q_clean)) * 0.25
-                confidence = min(92, score + 1 - length_penalty)
+                confidence = min(93, score + 2 - length_penalty)
                 candidates.append(build_candidate(
                     target_cob=r["Hiscox_COB"],
                     logic="Fuzzy NAICS title",
@@ -409,7 +532,7 @@ def fuzzy_cob_fallback(q_clean):
             continue
 
         length_penalty = abs(len(norm(phrase)) - len(q_clean)) * 0.40
-        confidence = min(90, score - 2 - length_penalty)
+        confidence = min(89, score - 3 - length_penalty)
 
         candidates.append(build_candidate(
             target_cob=phrase,
@@ -487,23 +610,45 @@ def search_engine(raw_query):
     q_clean = apply_synonyms(raw_query)
     all_candidates = []
 
+    # Hard overrides
     override = check_overrides(q_clean)
     if override:
         all_candidates.append(override)
 
-    all_candidates.extend(exact_partner_match(q_clean))
-    all_candidates.extend(exact_naics_match(q_clean))
+    # Weighted hints
+    forced_candidates, weighted_hints = get_weighted_hints(q_clean)
+    for forced in forced_candidates:
+        all_candidates.append(forced)
+
+    # Exact layers
+    exact_partner = exact_partner_match(q_clean)
+    exact_naics = exact_naics_match(q_clean)
+
+    exact_partner = [apply_hint_bonus(c, weighted_hints) for c in exact_partner]
+    exact_naics = [apply_hint_bonus(c, weighted_hints) for c in exact_naics]
+
+    all_candidates.extend(exact_partner)
+    all_candidates.extend(exact_naics)
 
     exactish = [c for c in all_candidates if c["source_type"] in {"override", "partner_exact", "naics_exact"}]
     if exactish:
         ranked = dedupe_best_candidates(exactish, limit=3)
         return ranked[0], ranked, q_clean
 
-    all_candidates.extend(fuzzy_partner_candidates(q_clean, limit=10))
-    all_candidates.extend(fuzzy_naics_candidates(q_clean, limit=10))
+    # Fuzzy layers
+    partner_fuzzy = fuzzy_partner_candidates(q_clean, limit=10)
+    naics_fuzzy = fuzzy_naics_candidates(q_clean, limit=10)
+
+    partner_fuzzy = [apply_hint_bonus(c, weighted_hints) for c in partner_fuzzy]
+    naics_fuzzy = [apply_hint_bonus(c, weighted_hints) for c in naics_fuzzy]
+
+    all_candidates.extend(partner_fuzzy)
+    all_candidates.extend(naics_fuzzy)
 
     if not all_candidates:
-        all_candidates.extend(fuzzy_cob_fallback(q_clean))
+        cob_fallback = fuzzy_cob_fallback(q_clean)
+        cob_fallback = [apply_hint_bonus(c, weighted_hints) for c in cob_fallback]
+        all_candidates.extend(cob_fallback)
 
     ranked = dedupe_best_candidates(all_candidates, limit=3)
 
@@ -513,11 +658,11 @@ def search_engine(raw_query):
     best = ranked[0]
 
     accepted = False
-    if best["source_type"] == "partner_fuzzy" and best["confidence"] >= 84:
+    if best["source_type"] == "partner_fuzzy" and best["confidence"] >= 86:
         accepted = True
-    elif best["source_type"] == "naics_fuzzy" and best["confidence"] >= 83:
+    elif best["source_type"] == "naics_fuzzy" and best["confidence"] >= 82:
         accepted = True
-    elif best["source_type"] == "cob_fallback" and best["confidence"] >= 89:
+    elif best["source_type"] == "cob_fallback" and best["confidence"] >= 90:
         accepted = True
 
     if accepted:
@@ -533,51 +678,71 @@ def candidate_field(candidates, idx, field):
         return candidates[idx].get(field, "")
     return ""
 
-def build_review_record(raw_val, best_match, top_candidates, q_clean):
+def build_batch_review_record(raw_val, best_match, top_candidates, q_clean):
     appetite = get_appetite_data(best_match["target_cob"]) if best_match else None
+    engine_choice = appetite["real_name"] if appetite else (best_match["target_cob"] if best_match else "")
 
     return {
         "Input_Description": raw_val,
+        "Engine_Chosen_COB": engine_choice,
+        "Candidate_1": candidate_field(top_candidates, 0, "target_cob"),
+        "Candidate_2": candidate_field(top_candidates, 1, "target_cob"),
+        "Candidate_3": candidate_field(top_candidates, 2, "target_cob"),
+        "Final_Selected_COB": engine_choice,
+        "Reviewer_Notes": "",
+
+        # Hidden-ish metadata retained for export
         "Cleaned_Query": q_clean,
-        "Engine_Chosen_COB": appetite["real_name"] if appetite else (best_match["target_cob"] if best_match else ""),
         "Engine_Logic": best_match["logic"] if best_match else "No confident match",
         "Engine_Confidence": best_match["confidence"] if best_match else "",
         "Engine_Partner_Source": best_match.get("partner", "") if best_match else "",
-        "Engine_Appetite": appetite["status"] if appetite else "Unknown",
-        "Engine_PL": "Yes" if appetite and appetite["pl"] else "No",
-        "Engine_GL": "Yes" if appetite and appetite["gl"] else "No",
-        "Engine_BOP": "Yes" if appetite and appetite["bop"] else "No",
-        "Engine_Cyber": "Yes" if appetite and appetite["cyb"] else "No",
-
-        "Candidate_1": candidate_field(top_candidates, 0, "target_cob"),
         "Candidate_1_Logic": candidate_field(top_candidates, 0, "logic"),
         "Candidate_1_Confidence": candidate_field(top_candidates, 0, "confidence"),
         "Candidate_1_Partner": candidate_field(top_candidates, 0, "partner"),
-
-        "Candidate_2": candidate_field(top_candidates, 1, "target_cob"),
         "Candidate_2_Logic": candidate_field(top_candidates, 1, "logic"),
         "Candidate_2_Confidence": candidate_field(top_candidates, 1, "confidence"),
         "Candidate_2_Partner": candidate_field(top_candidates, 1, "partner"),
-
-        "Candidate_3": candidate_field(top_candidates, 2, "target_cob"),
         "Candidate_3_Logic": candidate_field(top_candidates, 2, "logic"),
         "Candidate_3_Confidence": candidate_field(top_candidates, 2, "confidence"),
         "Candidate_3_Partner": candidate_field(top_candidates, 2, "partner"),
-
-        "Final_Selected_COB": "",
-        "Reviewer_Notes": ""
     }
 
-def build_excel_review_file(review_df):
+def build_batch_results_export(review_rows):
+    df = pd.DataFrame(review_rows)
+
+    # Put user-facing columns first
+    preferred = [
+        "Input_Description",
+        "Engine_Chosen_COB",
+        "Candidate_1",
+        "Candidate_2",
+        "Candidate_3",
+        "Final_Selected_COB",
+        "Reviewer_Notes",
+        "Cleaned_Query",
+        "Engine_Logic",
+        "Engine_Confidence",
+        "Engine_Partner_Source",
+        "Candidate_1_Logic",
+        "Candidate_1_Confidence",
+        "Candidate_1_Partner",
+        "Candidate_2_Logic",
+        "Candidate_2_Confidence",
+        "Candidate_2_Partner",
+        "Candidate_3_Logic",
+        "Candidate_3_Confidence",
+        "Candidate_3_Partner",
+    ]
+    cols = [c for c in preferred if c in df.columns]
+    df = df[cols]
+
     output = io.BytesIO()
-
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        review_df.to_excel(writer, index=False, sheet_name="Batch_Review")
+        df.to_excel(writer, index=False, sheet_name="Reviewed_Batch")
+        ref_df = pd.DataFrame({"Valid_Hiscox_COB": master_choices_sorted})
+        ref_df.to_excel(writer, index=False, sheet_name="Valid_Hiscox_COBs")
 
-        reference_df = pd.DataFrame({"Valid_Hiscox_COB": master_choices_sorted})
-        reference_df.to_excel(writer, index=False, sheet_name="Valid_Hiscox_COBs")
-
-        ws = writer.book["Batch_Review"]
+        ws = writer.book["Reviewed_Batch"]
         ws.freeze_panes = "A2"
 
         for column_cells in ws.columns:
@@ -657,7 +822,7 @@ def render_diagnostics(raw_query, q_clean, best_match, top_candidates):
             st.write("No candidates found.")
 
 # =========================
-# FEEDBACK LOG UI
+# SINGLE REVIEW UI
 # =========================
 def render_feedback_ui(raw_query, q_clean, best_match, top_candidates):
     st.markdown("---")
@@ -818,65 +983,121 @@ if query:
 render_feedback_log()
 
 # =========================
-# BATCH MODE
+# BATCH REVIEW UI V2
 # =========================
 st.markdown("---")
-st.header("📥 Batch Class Mapping")
-st.write("Upload a CSV or Excel file to generate a review workbook.")
+st.header("📥 Batch Review")
+st.write("Upload a CSV or Excel file, review matches in the app, then download the reviewed results.")
 
-uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"])
+uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx"], key="batch_uploader_v2")
 
 if uploaded_file:
-    with st.spinner("Processing your file..."):
-        if uploaded_file.name.lower().endswith(".csv"):
-            upload_df = pd.read_csv(uploaded_file)
-        else:
-            upload_df = pd.read_excel(uploaded_file)
+    if st.session_state.batch_review_filename != uploaded_file.name:
+        with st.spinner("Preparing batch review..."):
+            if uploaded_file.name.lower().endswith(".csv"):
+                upload_df = pd.read_csv(uploaded_file)
+            else:
+                upload_df = pd.read_excel(uploaded_file)
 
-        candidate_cols = []
-        for col in upload_df.columns:
+            candidate_cols = []
+            for col in upload_df.columns:
+                try:
+                    series = upload_df[col].fillna("").astype(str)
+                    avg_len = series.str.len().mean()
+                    nonblank = (series.str.strip() != "").mean()
+                    header_score = 0
+                    col_norm = norm(col)
+
+                    if any(k in col_norm for k in ["description", "industry", "business", "naics", "class", "activity", "partner"]):
+                        header_score += 20
+                    if avg_len > 6:
+                        header_score += 10
+                    if nonblank > 0.4:
+                        header_score += 10
+
+                    candidate_cols.append((col, header_score))
+                except Exception:
+                    pass
+
+            candidate_cols = sorted(candidate_cols, key=lambda x: x[1], reverse=True)
+            text_column = candidate_cols[0][0] if candidate_cols else None
+
+            if not text_column:
+                st.error("Could not auto-detect a description column.")
+            else:
+                prepared_rows = []
+                for raw_val in upload_df[text_column].fillna("").astype(str):
+                    if not raw_val.strip():
+                        continue
+                    best_match, top_candidates, q_clean = search_engine(raw_val)
+                    prepared_rows.append(build_batch_review_record(raw_val, best_match, top_candidates, q_clean))
+
+                st.session_state.batch_review_rows = prepared_rows
+                st.session_state.batch_review_filename = uploaded_file.name
+
+if st.session_state.batch_review_rows:
+    st.success(f"Loaded batch review set from: {st.session_state.batch_review_filename}")
+
+    st.markdown('<div class="small-note">Edit only the rows that need correction. The final selected COB is prefilled with the engine choice when one exists.</div>', unsafe_allow_html=True)
+
+    for i, row in enumerate(st.session_state.batch_review_rows):
+        with st.expander(f"{i+1}. {row['Input_Description']}", expanded=(i < 5)):
+            st.write(f"**Engine choice:** {row['Engine_Chosen_COB'] or 'No confident match'}")
+
+            candidate_text = []
+            for n in [1, 2, 3]:
+                cand = row.get(f"Candidate_{n}", "")
+                if cand:
+                    partner_src = row.get(f"Candidate_{n}_Partner", "")
+                    logic = row.get(f"Candidate_{n}_Logic", "")
+                    conf = row.get(f"Candidate_{n}_Confidence", "")
+                    extra = f" — {logic} — {conf}%"
+                    if partner_src:
+                        extra += f" — {partner_src}"
+                    candidate_text.append(f"{n}. {cand}{extra}")
+
+            if candidate_text:
+                st.write("**Top candidates:**")
+                for line in candidate_text:
+                    st.write(f"- {line}")
+            else:
+                st.write("**Top candidates:** None")
+
+            current_default = row.get("Final_Selected_COB", "")
             try:
-                series = upload_df[col].fillna("").astype(str)
-                avg_len = series.str.len().mean()
-                nonblank = (series.str.strip() != "").mean()
-                header_score = 0
-                col_norm = norm(col)
+                default_index = ([""] + master_choices_sorted).index(current_default) if current_default else 0
+            except ValueError:
+                default_index = 0
 
-                if any(k in col_norm for k in ["description", "industry", "business", "naics", "class", "activity", "partner"]):
-                    header_score += 20
-                if avg_len > 6:
-                    header_score += 10
-                if nonblank > 0.4:
-                    header_score += 10
-
-                candidate_cols.append((col, header_score))
-            except Exception:
-                pass
-
-        candidate_cols = sorted(candidate_cols, key=lambda x: x[1], reverse=True)
-        text_column = candidate_cols[0][0] if candidate_cols else None
-
-        if not text_column:
-            st.error("Could not auto-detect a description column.")
-        else:
-            st.success(f"Using input column: **{text_column}**")
-
-            review_rows = []
-            for raw_val in upload_df[text_column].fillna("").astype(str):
-                if not raw_val.strip():
-                    continue
-
-                best_match, top_candidates, q_clean = search_engine(raw_val)
-                review_rows.append(build_review_record(raw_val, best_match, top_candidates, q_clean))
-
-            review_df = pd.DataFrame(review_rows)
-            st.dataframe(review_df.head(50), use_container_width=True)
-
-            excel_bytes = build_excel_review_file(review_df)
-
-            st.download_button(
-                label="⬇️ Download Review Workbook (.xlsx)",
-                data=excel_bytes,
-                file_name="Atlas_Batch_Review.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            selected_cob = st.selectbox(
+                "Final selected Hiscox_COB",
+                options=[""] + master_choices_sorted,
+                index=default_index,
+                key=f"batch_final_cob_{i}"
             )
+            row["Final_Selected_COB"] = selected_cob
+
+            notes_val = st.text_input(
+                "Reviewer notes",
+                value=row.get("Reviewer_Notes", ""),
+                key=f"batch_notes_{i}"
+            )
+            row["Reviewer_Notes"] = notes_val
+
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        reviewed_excel = build_batch_results_export(st.session_state.batch_review_rows)
+        st.download_button(
+            label="⬇️ Download Reviewed Batch (.xlsx)",
+            data=reviewed_excel,
+            file_name="Atlas_Batch_Reviewed.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    with col2:
+        if st.button("Clear Batch Review Set"):
+            st.session_state.batch_review_rows = []
+            st.session_state.batch_review_filename = ""
+            st.experimental_rerun()
