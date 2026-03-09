@@ -1,20 +1,17 @@
 import streamlit as st
 import pandas as pd
-from rapidfuzz import process, fuzz
 
 st.set_page_config(page_title="Hiscox Atlas 8.0", layout="wide")
 
 @st.cache_data(ttl=300)
-def load_all_data():
+def load_data():
     sheet_id = "1XiT2GVCwdM2_F2-MHQOVVy-ZMAAL5_Tz0AaIkdPs-U0"
     base_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet="
     
-    # Load Master and clean NAICS
+    # Load Master
     master = pd.read_csv(base_url + "Hiscox543")
-    # Identify NAICS column (usually index 6 based on our debugger)
-    master['NAICS_CLEAN'] = master.iloc[:, 6].astype(str).str.extract(r'(\d{6})')
     
-    # Load and combine Partner tabs
+    # Load Partners (p1, p2, p3)
     p1 = pd.read_csv(base_url + "p1")
     p2 = pd.read_csv(base_url + "p2")
     p3 = pd.read_csv(base_url + "p3")
@@ -22,15 +19,16 @@ def load_all_data():
     
     return master, partners
 
-master_df, partner_df = load_all_data()
+master_df, partner_df = load_data()
 
 st.title("🛡️ Hiscox Appetite Atlas 8.0")
-query = st.text_input("Search Industry Name or 6-Digit NAICS Code:")
+query = st.text_input("Search Industry, NAICS, or Keyword (e.g., 'Poster', 'Yoga'):")
 
-def display_card(row, source_type):
-    st.success(f"✅ Match Found via {source_type}")
-    st.subheader(f"Class: {row.iloc[1]}")
+def display_result(row, source):
+    st.success(f"✅ Result found via {source}")
+    st.subheader(f"Class: {row.iloc[1]}") # Hiscox_COB
     
+    # Appetite Boxes
     c1, c2, c3, c4 = st.columns(4)
     lobs = [("GL", 2, c1), ("PL", 3, c2), ("BOP", 4, c3), ("Cyber", 5, c4)]
     
@@ -41,31 +39,31 @@ def display_card(row, source_type):
         else:
             col.error(f"### {name}\n**NO**")
     
-    st.info(f"**Definition:** {row.iloc[7]}")
+    # Definition - We scan columns 7, 8, and 9 to find the first one that isn't empty
+    defn = "No definition provided in spreadsheet."
+    for i in [7, 8, 9]:
+        if i < len(row) and pd.notna(row.iloc[i]) and str(row.iloc[i]).strip().lower() != "nan":
+            defn = row.iloc[i]
+            break
+    st.info(f"**Definition:** {defn}")
 
 if query:
-    q = query.strip().lower()
-    
-    # 1. SEARCH NAICS (If input is 6 digits)
-    if q.isdigit() and len(q) == 6:
-        naics_match = master_df[master_df['NAICS_CLEAN'] == q]
-        if not naics_match.empty:
-            display_card(naics_match.iloc[0], "Exact NAICS Code")
-            st.stop()
+    q = query.lower().strip()
 
-    # 2. SEARCH PARTNER TABS (p1, p2, p3)
-    # This looks for your term in ANY column of the partner sheets
-    p_match = partner_df[partner_df.apply(lambda r: q in str(r.values).lower(), axis=1)]
-    if not p_match.empty:
-        display_card(p_match.iloc[0], "Partner Approval Mapping")
-        st.stop()
-
-    # 3. SEARCH MASTER (Fuzzy Fallback)
-    choices = master_df.iloc[:, 1].tolist()
-    best_match = process.extractOne(q, choices, scorer=fuzz.token_set_ratio)
+    # 1. THE "COMMON SENSE" KEYWORD SEARCH (Highest Priority)
+    # Checks if the word you typed is actually IN the Class Name or Partner Terms
+    p_exact = partner_df[partner_df.iloc[:, 1].str.lower().str.contains(q, na=False)]
+    m_exact = master_df[master_df.iloc[:, 1].str.lower().str.contains(q, na=False)]
     
-    if best_match and best_match[1] > 70:
-        row = master_df[master_df.iloc[:, 1] == best_match[0]].iloc[0]
-        display_card(row, f"AI Recommendation ({int(best_match[1])}% Match)")
+    if not p_exact.empty:
+        display_result(p_exact.iloc[0], "Partner Approvals")
+    elif not m_exact.empty:
+        display_result(m_exact.iloc[0], "Master List")
     else:
-        st.warning("No match found. Try a different keyword or a 6-digit NAICS code.")
+        # 2. THE DESCRIPTION SEARCH (Secondary)
+        # If it's not in the title, look in the definition column
+        m_desc = master_df[master_df.iloc[:, 7].str.lower().str.contains(q, na=False)]
+        if not m_desc.empty:
+            display_result(m_desc.iloc[0], "Industry Description Match")
+        else:
+            st.warning(f"No clear match for '{query}'. Try a simpler keyword.")
